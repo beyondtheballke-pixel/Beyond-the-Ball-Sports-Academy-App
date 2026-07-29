@@ -6,7 +6,7 @@ import './index.css'
 const SUPABASE_URL = 'https://cdfvpjituqlingdnbtfh.supabase.co'
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkZnZwaml0dXFsaW5nZG5idGZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5ODMyMzAsImV4cCI6MjA5NDU1OTIzMH0.Rx0WRs-0q-_R0UmLyIRrvDOLkruMxYSTUDQDEh2SuAk'
 
-const db = createClient(SUPABASE_URL, SUPABASE_KEY, {
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   db: { schema: 'sportspulse' },
   auth: { storage: window.sessionStorage, autoRefreshToken: true }
 })
