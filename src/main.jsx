@@ -41,9 +41,9 @@ function Login({ onLogin }) {
   const [error, setError] = useState('')
   const handleLogin = async (e) => {
     e.preventDefault(); setLoading(true); setError('')
-    const { data, error: err } = await db.auth.signInWithPassword({ email, password })
+    const { data, error: err } = await supabase.auth.signInWithPassword({ email, password })
     if (err) { setError(err.message); setLoading(false); return }
-    const { data: profile } = await db.from('profiles').select('*, club:clubs(*)').eq('user_id', data.user.id).single()
+    const { data: profile } = await supabase.from('profiles').select('*, club:clubs(*)').eq('user_id', data.user.id).single()
     onLogin(data.user, profile); setLoading(false)
   }
   return (
@@ -94,11 +94,11 @@ function ManagerDashboard({ club, profile }) {
   useEffect(() => {
     const load = async () => {
       const [{ count: players }, { count: members }, { data: live }, { data: next }, { data: feeData }] = await Promise.all([
-        db.from('players').select('*', { count: 'exact', head: true }).eq('club_id', club.id).eq('is_active', true),
-        db.from('fan_members').select('*', { count: 'exact', head: true }).eq('club_id', club.id).eq('is_active', true),
-        db.from('fixtures').select('*').eq('club_id', club.id).eq('status', 'live').limit(1),
-        db.from('fixtures').select('*').eq('club_id', club.id).eq('status', 'upcoming').order('match_date', { ascending: true }).limit(3),
-        db.from('fees').select('amount,paid_amount').eq('club_id', club.id).eq('status', 'unpaid')
+        supabase.from('players').select('*', { count: 'exact', head: true }).eq('club_id', club.id).eq('is_active', true),
+        supabase.from('fan_members').select('*', { count: 'exact', head: true }).eq('club_id', club.id).eq('is_active', true),
+        supabase.from('fixtures').select('*').eq('club_id', club.id).eq('status', 'live').limit(1),
+        supabase.from('fixtures').select('*').eq('club_id', club.id).eq('status', 'upcoming').order('match_date', { ascending: true }).limit(3),
+        supabase.from('fees').select('amount,paid_amount').eq('club_id', club.id).eq('status', 'unpaid')
       ])
       const pendingFees = (feeData || []).reduce((s, f) => s + (f.amount - (f.paid_amount || 0)), 0)
       setStats({ players: players || 0, members: members || 0, fees: pendingFees })
@@ -162,7 +162,7 @@ function SquadPage({ club, userRole }) {
   const [selected, setSelected] = useState(null)
 
   const load = useCallback(async () => {
-    const { data } = await db.from('players').select('*').eq('club_id', club.id).order('squad_number', { ascending: true })
+    const { data } = await supabase.from('players').select('*').eq('club_id', club.id).order('squad_number', { ascending: true })
     setPlayers(data || []); setLoading(false)
   }, [club.id])
 
@@ -236,9 +236,9 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
     const file = e.target.files[0]; if (!file) return
     setUploading('photo')
     const path = `players/${club.id}/${Date.now()}.${file.name.split('.').pop()}`
-    const { error: err } = await db.storage.from('sportspulse').upload(path, file)
+    const { error: err } = await supabase.storage.from('sportspulse').upload(path, file)
     if (err) { setError('Photo upload failed: ' + err.message); setUploading(''); return }
-    const { data: { publicUrl } } = db.storage.from('sportspulse').getPublicUrl(path)
+    const { data: { publicUrl } } = supabase.storage.from('sportspulse').getPublicUrl(path)
     set('photo_url', publicUrl); setUploading('')
   }
 
@@ -246,9 +246,9 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
     const file = e.target.files[0]; if (!file) return
     setUploading(docType)
     const path = `documents/${club.id}/${Date.now()}-${docType}.${file.name.split('.').pop()}`
-    const { error: err } = await db.storage.from('sportspulse').upload(path, file)
+    const { error: err } = await supabase.storage.from('sportspulse').upload(path, file)
     if (err) { setError('Upload failed: ' + err.message); setUploading(''); return }
-    const { data: { publicUrl } } = db.storage.from('sportspulse').getPublicUrl(path)
+    const { data: { publicUrl } } = supabase.storage.from('sportspulse').getPublicUrl(path)
     setDocs(prev => [...prev.filter(d => d.doc_type !== docType), { doc_type: docType, file_url: publicUrl, file_name: file.name }])
     setUploading('')
   }
@@ -256,7 +256,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
   const save = async () => {
     if (!form.full_name) { setError('Full name is required'); return }
     setSaving(true); setError('')
-    const { data: player, error: err } = await db.from('players').insert({
+    const { data: player, error: err } = await supabase.from('players').insert({
       club_id: club.id, full_name: form.full_name, date_of_birth: form.date_of_birth || null,
       nationality: form.nationality || null, id_number: form.id_number || null, photo_url: form.photo_url || null,
       squad_number: form.squad_number ? parseInt(form.squad_number) : null, position: form.position || null,
@@ -266,7 +266,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
       contract_start: form.contract_start || null, contract_end: form.contract_end || null, status: 'active',
     }).select().single()
     if (err) { setError(err.message); setSaving(false); return }
-    if (docs.length > 0) await db.from('player_documents').insert(docs.map(d => ({ ...d, player_id: player.id, club_id: club.id })))
+    if (docs.length > 0) await supabase.from('player_documents').insert(docs.map(d => ({ ...d, player_id: player.id, club_id: club.id })))
     setSaving(false); onSaved()
   }
 
@@ -361,8 +361,8 @@ function PlayerDetailModal({ player, club, userRole, onClose }) {
   useEffect(() => {
     const load = async () => {
       const [{ data: d }, { data: s }] = await Promise.all([
-        db.from('player_documents').select('*').eq('player_id', player.id),
-        db.from('player_match_stats').select('*').eq('player_id', player.id)
+        supabase.from('player_documents').select('*').eq('player_id', player.id),
+        supabase.from('player_match_stats').select('*').eq('player_id', player.id)
       ])
       setDocs(d || [])
       const ms = s || []
@@ -441,17 +441,17 @@ function FixturesPage({ club, userRole }) {
   const [showAdd, setShowAdd] = useState(false)
 
   const load = useCallback(async () => {
-    const { data } = await db.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false })
+    const { data } = await supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false })
     setFixtures(data || []); setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
 
   useEffect(() => {
-    const ch = db.channel('fixtures-rt').on('postgres_changes', { event: 'UPDATE', schema: 'sportspulse', table: 'fixtures', filter: `club_id=eq.${club.id}` }, payload => {
+    const ch = supabase.channel('fixtures-rt').on('postgres_changes', { event: 'UPDATE', schema: 'sportspulse', table: 'fixtures', filter: `club_id=eq.${club.id}` }, payload => {
       setFixtures(prev => prev.map(f => f.id === payload.new.id ? payload.new : f))
     }).subscribe()
-    return () => db.removeChannel(ch)
+    return () => supabase.removeChannel(ch)
   }, [club.id])
 
   const filtered = fixtures.filter(f => filter === 'all' || (filter === 'upcoming' && f.status === 'upcoming') || (filter === 'live' && f.status === 'live') || (filter === 'results' && f.status === 'completed'))
@@ -514,7 +514,7 @@ function AddFixtureModal({ club, onClose, onSaved }) {
     if (!form.opponent || !form.match_date) { setError('Opponent and date are required'); return }
     setSaving(true)
     const match_date = new Date(`${form.match_date}T${form.match_time}:00`).toISOString()
-    const { error: err } = await db.from('fixtures').insert({ club_id: club.id, opponent: form.opponent, competition: form.competition, match_date, venue: form.venue || null, is_home: form.is_home, status: 'upcoming' })
+    const { error: err } = await supabase.from('fixtures').insert({ club_id: club.id, opponent: form.opponent, competition: form.competition, match_date, venue: form.venue || null, is_home: form.is_home, status: 'upcoming' })
     if (err) { setError(err.message); setSaving(false); return }
     onSaved()
   }
@@ -552,14 +552,14 @@ function MatchCentrePage({ club }) {
   useEffect(() => {
     const load = async () => {
       const [{ data: f }, { data: p }] = await Promise.all([
-        db.from('fixtures').select('*').eq('club_id', club.id).in('status', ['live', 'upcoming']).order('match_date', { ascending: true }).limit(5),
-        db.from('players').select('id,full_name,squad_number,position').eq('club_id', club.id).eq('is_active', true).order('squad_number', { ascending: true })
+        supabase.from('fixtures').select('*').eq('club_id', club.id).in('status', ['live', 'upcoming']).order('match_date', { ascending: true }).limit(5),
+        supabase.from('players').select('id,full_name,squad_number,position').eq('club_id', club.id).eq('is_active', true).order('squad_number', { ascending: true })
       ])
       setFixtures(f || []); setPlayers(p || [])
       const live = (f || []).find(x => x.status === 'live') || (f || [])[0]
       if (live) {
         setSelected(live)
-        const { data: evts } = await db.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', live.id).order('minute', { ascending: false })
+        const { data: evts } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', live.id).order('minute', { ascending: false })
         setEvents(evts || [])
       }
       setLoading(false)
@@ -569,27 +569,27 @@ function MatchCentrePage({ club }) {
 
   useEffect(() => {
     if (!selected) return
-    const ch = db.channel('match-rt')
+    const ch = supabase.channel('match-rt')
       .on('postgres_changes', { event: 'INSERT', schema: 'sportspulse', table: 'match_events', filter: `fixture_id=eq.${selected.id}` }, async payload => {
-        const { data } = await db.from('match_events').select('*, player:players(full_name,squad_number)').eq('id', payload.new.id).single()
+        const { data } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('id', payload.new.id).single()
         setEvents(prev => [data, ...prev])
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'sportspulse', table: 'fixtures', filter: `id=eq.${selected.id}` }, payload => {
         setSelected(payload.new); setFixtures(prev => prev.map(f => f.id === payload.new.id ? payload.new : f))
       })
       .subscribe()
-    return () => db.removeChannel(ch)
+    return () => supabase.removeChannel(ch)
   }, [selected?.id])
 
-  const startMatch = async () => { if (!selected) return; await db.from('fixtures').update({ status: 'live', minute: 1, home_score: 0, away_score: 0 }).eq('id', selected.id) }
-  const endMatch = async () => { if (!selected) return; await db.from('fixtures').update({ status: 'completed' }).eq('id', selected.id) }
+  const startMatch = async () => { if (!selected) return; await supabase.from('fixtures').update({ status: 'live', minute: 1, home_score: 0, away_score: 0 }).eq('id', selected.id) }
+  const endMatch = async () => { if (!selected) return; await supabase.from('fixtures').update({ status: 'completed' }).eq('id', selected.id) }
 
   const logEvent = async () => {
     if (!selected || !logForm.minute) return
     setSaving(true)
-    await db.from('match_events').insert({ fixture_id: selected.id, club_id: club.id, event_type: logForm.event_type, minute: parseInt(logForm.minute), player_id: logForm.player_id || null })
-    if (logForm.event_type === 'goal' && selected.is_home) await db.from('fixtures').update({ home_score: (selected.home_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
-    if (logForm.event_type === 'goal' && !selected.is_home) await db.from('fixtures').update({ away_score: (selected.away_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
+    await supabase.from('match_events').insert({ fixture_id: selected.id, club_id: club.id, event_type: logForm.event_type, minute: parseInt(logForm.minute), player_id: logForm.player_id || null })
+    if (logForm.event_type === 'goal' && selected.is_home) await supabase.from('fixtures').update({ home_score: (selected.home_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
+    if (logForm.event_type === 'goal' && !selected.is_home) await supabase.from('fixtures').update({ away_score: (selected.away_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
     setLogForm(prev => ({ ...prev, minute: '', player_id: '' })); setSaving(false)
   }
 
@@ -608,7 +608,7 @@ function MatchCentrePage({ club }) {
       {fixtures.length > 1 && (
         <div className="filter-pills" style={{ marginBottom: 20 }}>
           {fixtures.map(f => (
-            <button key={f.id} className={`pill ${selected?.id === f.id ? 'active' : ''}`} onClick={async () => { setSelected(f); const { data } = await db.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', f.id).order('minute', { ascending: false }); setEvents(data || []) }}>
+            <button key={f.id} className={`pill ${selected?.id === f.id ? 'active' : ''}`} onClick={async () => { setSelected(f); const { data } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', f.id).order('minute', { ascending: false }); setEvents(data || []) }}>
               {f.opponent} \u00b7 {fmtDate(f.match_date)}
             </button>
           ))}
@@ -683,7 +683,7 @@ function TrainingPage({ club, userRole }) {
   const [showAdd, setShowAdd] = useState(false)
 
   const load = useCallback(async () => {
-    const { data } = await db.from('training_sessions').select('*').eq('club_id', club.id).order('session_date', { ascending: false })
+    const { data } = await supabase.from('training_sessions').select('*').eq('club_id', club.id).order('session_date', { ascending: false })
     setSessions(data || []); setLoading(false)
   }, [club.id])
 
@@ -732,7 +732,7 @@ function AddTrainingModal({ club, onClose, onSaved }) {
     if (!form.title || !form.session_date) return
     setSaving(true)
     const session_date = new Date(`${form.session_date}T${form.session_time}:00`).toISOString()
-    await db.from('training_sessions').insert({ club_id: club.id, title: form.title, session_type: form.session_type, session_date, duration_mins: form.duration_mins, venue: form.venue || null, notes: form.notes || null })
+    await supabase.from('training_sessions').insert({ club_id: club.id, title: form.title, session_type: form.session_type, session_date, duration_mins: form.duration_mins, venue: form.venue || null, notes: form.notes || null })
     setSaving(false); onSaved()
   }
 
@@ -765,8 +765,8 @@ function FeesPage({ club }) {
 
   const load = useCallback(async () => {
     const [{ data: f }, { data: p }] = await Promise.all([
-      db.from('fees').select('*, player:players(full_name,squad_number)').eq('club_id', club.id).order('created_at', { ascending: false }),
-      db.from('players').select('id,full_name,squad_number').eq('club_id', club.id).eq('is_active', true)
+      supabase.from('fees').select('*, player:players(full_name,squad_number)').eq('club_id', club.id).order('created_at', { ascending: false }),
+      supabase.from('players').select('id,full_name,squad_number').eq('club_id', club.id).eq('is_active', true)
     ])
     setFees(f || []); setPlayers(p || []); setLoading(false)
   }, [club.id])
@@ -826,7 +826,7 @@ function AddFeeModal({ club, players, onClose, onSaved }) {
   const save = async () => {
     if (!form.player_id || !form.description || !form.amount) return
     setSaving(true)
-    await db.from('fees').insert({ club_id: club.id, player_id: form.player_id, description: form.description, amount: parseInt(form.amount), due_date: form.due_date || null, term: form.term || null, status: 'unpaid' })
+    await supabase.from('fees').insert({ club_id: club.id, player_id: form.player_id, description: form.description, amount: parseInt(form.amount), due_date: form.due_date || null, term: form.term || null, status: 'unpaid' })
     setSaving(false); onSaved()
   }
 
