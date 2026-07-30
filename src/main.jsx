@@ -12,9 +12,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 })
 
 const initials = (name = '') => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }) : '\u2014'
-const fmtTime = (d) => d ? new Date(d).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }) : '\u2014'
-const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '\u2014'
+const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'
+const fmtTime = (d) => d ? new Date(d).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }) : '—'
+const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '—'
 const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d).getTime(); const h = Math.floor(diff / 3600000); if (h < 1) return 'Just now'; if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago` }
 const fmtKES = (n) => `KES ${(n || 0).toLocaleString()}`
 
@@ -28,36 +28,45 @@ const STATUS_COLORS = {
 function Spinner() {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px' }}>
-      <i className="ti ti-loader" style={{ fontSize: 28, color: 'var(--btb-blue)', animation: 'spin 1s linear infinite' }}></i>
+      <div style={{ width: 28, height: 28, border: '3px solid rgba(26,75,219,0.2)', borderTopColor: '#1a4bdb', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }}></div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   )
 }
 
-function Login({ onLogin }) {
+function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
   const handleLogin = async (e) => {
-    e.preventDefault(); setLoading(true); setError('')
-    const { data, error: err } = await supabase.auth.signInWithPassword({ email, password })
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    const { error: err } = await supabase.auth.signInWithPassword({ email, password })
     if (err) { setError(err.message); setLoading(false); return }
-    const { data: profile } = await supabase.from('profiles').select('*, club:clubs(*)').eq('user_id', data.user.id).single()
-    onLogin(data.user, profile); setLoading(false)
+    setLoading(false)
   }
+
   return (
     <div className="login-wrap">
       <div className="login-card">
         <div className="login-crest">BTB</div>
         <div className="login-title">Beyond the Ball</div>
         <div className="login-sub">Sports Academy Platform</div>
-        {error && <div className="login-error"><i className="ti ti-alert-circle"></i> {error}</div>}
+        {error && <div className="login-error">{error}</div>}
         <form onSubmit={handleLogin}>
-          <div className="form-group" style={{ marginBottom: 12 }}><label>Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required /></div>
-          <div className="form-group" style={{ marginBottom: 20 }}><label>Password</label><input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" required /></div>
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com" required />
+          </div>
+          <div className="form-group" style={{ marginBottom: 20 }}>
+            <label>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          </div>
           <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={loading}>
-            {loading ? <><i className="ti ti-loader"></i> Signing in...</> : <><i className="ti ti-login"></i> Sign in</>}
+            {loading ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
         <div style={{ textAlign: 'center', marginTop: 16, fontSize: 11, color: 'var(--text-muted)' }}>Contact your manager to get access</div>
@@ -77,7 +86,7 @@ function Modal({ title, onClose, children, size = '' }) {
       <div className={`modal ${size}`}>
         <div className="modal-hdr">
           <div className="modal-title">{title}</div>
-          <button className="modal-close" onClick={onClose}><i className="ti ti-x"></i></button>
+          <button className="modal-close" onClick={onClose}>✕</button>
         </div>
         {children}
       </div>
@@ -85,7 +94,7 @@ function Modal({ title, onClose, children, size = '' }) {
   )
 }
 
-function ManagerDashboard({ club, profile }) {
+function ManagerDashboard({ club, profile, setPage }) {
   const [stats, setStats] = useState({ players: 0, members: 0, fees: 0 })
   const [liveFixture, setLiveFixture] = useState(null)
   const [upcoming, setUpcoming] = useState([])
@@ -102,40 +111,43 @@ function ManagerDashboard({ club, profile }) {
       ])
       const pendingFees = (feeData || []).reduce((s, f) => s + (f.amount - (f.paid_amount || 0)), 0)
       setStats({ players: players || 0, members: members || 0, fees: pendingFees })
-      setLiveFixture(live?.[0] || null); setUpcoming(next || []); setLoading(false)
+      setLiveFixture(live?.[0] || null)
+      setUpcoming(next || [])
+      setLoading(false)
     }
     load()
   }, [club.id])
 
   if (loading) return <Spinner />
+
   return (
     <div className="page">
       <div className="page-hdr">
         <div>
           <div className="page-title">Good day, {profile.full_name.split(' ')[0]}</div>
-          <div className="page-sub">{club.name} &middot; {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
+          <div className="page-sub">{club.name} · {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
         </div>
       </div>
       {liveFixture && (
         <div className="alert alert-green" style={{ marginBottom: 16 }}>
           <div className="live-pulse"></div>
-          <strong>Match in progress</strong> &mdash; {club.short_name} vs {liveFixture.opponent} &middot; {liveFixture.minute}'
+          <strong>Match in progress</strong> — {club.short_name} vs {liveFixture.opponent} · {liveFixture.minute}'
         </div>
       )}
       <div className="stat-grid">
-        <div className="stat-card"><div className="stat-label"><i className="ti ti-users"></i> Squad players</div><div className="stat-value">{stats.players}</div><div className="stat-change neutral">Active</div></div>
-        <div className="stat-card"><div className="stat-label"><i className="ti ti-heart"></i> Fan members</div><div className="stat-value">{stats.members}</div><div className="stat-change neutral">Registered</div></div>
-        <div className="stat-card"><div className="stat-label"><i className="ti ti-calendar"></i> Upcoming</div><div className="stat-value">{upcoming.length}</div><div className="stat-change neutral">Scheduled</div></div>
-        <div className="stat-card"><div className="stat-label"><i className="ti ti-cash"></i> Pending fees</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(stats.fees)}</div><div className="stat-change down">Uncollected</div></div>
+        <div className="stat-card"><div className="stat-label">Squad players</div><div className="stat-value">{stats.players}</div><div className="stat-change neutral">Active</div></div>
+        <div className="stat-card"><div className="stat-label">Fan members</div><div className="stat-value">{stats.members}</div><div className="stat-change neutral">Registered</div></div>
+        <div className="stat-card"><div className="stat-label">Upcoming</div><div className="stat-value">{upcoming.length}</div><div className="stat-change neutral">Scheduled</div></div>
+        <div className="stat-card"><div className="stat-label">Pending fees</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(stats.fees)}</div><div className="stat-change down">Uncollected</div></div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 }}>
         <div className="card">
           <div className="card-hdr"><div className="card-title">Upcoming fixtures</div></div>
           {upcoming.length === 0
-            ? <div className="empty" style={{ padding: 24 }}><i className="ti ti-calendar"></i><div className="empty-sub">No upcoming fixtures</div></div>
+            ? <div className="empty" style={{ padding: 24 }}><div className="empty-sub">No upcoming fixtures</div></div>
             : upcoming.map(f => (
               <div key={f.id} style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.opponent}</div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(f.match_date)} &middot; {fmtTime(f.match_date)}</div></div>
+                <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.opponent}</div><div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(f.match_date)} · {fmtTime(f.match_date)}</div></div>
                 <span className={`badge ${f.is_home ? 'badge-blue' : 'badge-gray'}`}>{f.is_home ? 'Home' : 'Away'}</span>
               </div>
             ))}
@@ -143,8 +155,13 @@ function ManagerDashboard({ club, profile }) {
         <div className="card">
           <div className="card-hdr"><div className="card-title">Quick actions</div></div>
           <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {[{ icon: 'ti-user-plus', label: 'Register player', color: 'var(--btb-blue)' }, { icon: 'ti-calendar-plus', label: 'Add fixture', color: 'var(--btb-blue)' }, { icon: 'ti-cash', label: 'Manage fees', color: 'var(--green)' }, { icon: 'ti-chart-bar', label: 'View analytics', color: 'var(--btb-gold)' }].map(a => (
-              <button key={a.label} className="btn btn-ghost" style={{ justifyContent: 'flex-start', gap: 10 }}><i className={`ti ${a.icon}`} style={{ color: a.color, fontSize: 16 }}></i>{a.label}</button>
+            {[
+              { label: 'Register player', page: 'squad' },
+              { label: 'Add fixture', page: 'fixtures' },
+              { label: 'Manage fees', page: 'fees' },
+              { label: 'View analytics', page: 'analytics' }
+            ].map(a => (
+              <button key={a.label} className="btn btn-ghost" style={{ justifyContent: 'flex-start' }} onClick={() => setPage(a.page)}>{a.label}</button>
             ))}
           </div>
         </div>
@@ -163,7 +180,8 @@ function SquadPage({ club, userRole }) {
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('players').select('*').eq('club_id', club.id).order('squad_number', { ascending: true })
-    setPlayers(data || []); setLoading(false)
+    setPlayers(data || [])
+    setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
@@ -181,15 +199,12 @@ function SquadPage({ club, userRole }) {
       <div className="page-hdr">
         <div><div className="page-title">Squad</div><div className="page-sub">{players.filter(p => p.is_active).length} active players</div></div>
         {(userRole === 'manager' || userRole === 'coach') && (
-          <button className="btn btn-primary" onClick={() => setShowAdd(true)}><i className="ti ti-user-plus"></i> Register player</button>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Register player</button>
         )}
       </div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-        <div style={{ position: 'relative', flex: 1 }}>
-          <i className="ti ti-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', fontSize: 15 }}></i>
-          <input style={{ paddingLeft: 32, width: '100%', background: 'rgba(255,255,255,0.05)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '8px 12px 8px 34px', color: 'var(--text)', fontSize: 13, outline: 'none' }}
-            placeholder="Search players..." value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
+        <input style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '8px 12px', color: 'var(--text)', fontSize: 13, outline: 'none' }}
+          placeholder="Search players..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
       <div className="filter-pills">
         {['All', 'Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => (
@@ -199,19 +214,19 @@ function SquadPage({ club, userRole }) {
         ))}
       </div>
       {filtered.length === 0
-        ? <div className="empty"><i className="ti ti-users"></i><div className="empty-title">No players found</div><div className="empty-sub">{userRole === 'manager' ? 'Register your first player to get started' : 'No players match your search'}</div></div>
+        ? <div className="empty"><div className="empty-title">No players found</div><div className="empty-sub">{userRole === 'manager' ? 'Register your first player to get started' : 'No players match your search'}</div></div>
         : (
           <div className="player-grid">
             {filtered.map(p => (
               <div key={p.id} className="player-card" onClick={() => setSelected(p)}>
                 <div className="player-card-img">
-                  {p.photo_url ? <img src={p.photo_url} alt={p.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <i className="ti ti-user" style={{ fontSize: 32, color: 'rgba(255,255,255,0.2)' }}></i>}
+                  {p.photo_url ? <img src={p.photo_url} alt={p.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ fontSize: 32, color: 'rgba(255,255,255,0.2)' }}>👤</div>}
                   <div className="player-card-num">{p.squad_number}</div>
                   <div className="player-card-status" style={{ background: p.status === 'active' ? 'var(--green)' : p.status === 'injured' ? 'var(--red)' : 'var(--amber)' }}></div>
                 </div>
                 <div className="player-card-body">
                   <div className="player-card-name">{p.full_name}</div>
-                  <div className="player-card-pos">{p.position_detail || p.position || '\u2014'}</div>
+                  <div className="player-card-pos">{p.position_detail || p.position || '—'}</div>
                 </div>
               </div>
             ))}
@@ -263,7 +278,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
       position_detail: form.position_detail || null, dominant_foot: form.dominant_foot || null,
       height_cm: form.height_cm ? parseInt(form.height_cm) : null, weight_kg: form.weight_kg ? parseInt(form.weight_kg) : null,
       school_name: form.school_name || null, school_grade: form.school_grade || null, home_address: form.home_address || null,
-      contract_start: form.contract_start || null, contract_end: form.contract_end || null, status: 'active',
+      contract_start: form.contract_start || null, contract_end: form.contract_end || null, status: 'active', is_active: true,
     }).select().single()
     if (err) { setError(err.message); setSaving(false); return }
     if (docs.length > 0) await supabase.from('player_documents').insert(docs.map(d => ({ ...d, player_id: player.id, club_id: club.id })))
@@ -275,22 +290,22 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
   return (
     <Modal title="Register new player" onClose={onClose} size="modal-lg">
       <div className="modal-body">
-        {error && <div className="alert alert-red"><i className="ti ti-alert-circle"></i> {error}</div>}
+        {error && <div className="alert alert-red">{error}</div>}
         <div className="tabs no-scroll" style={{ marginBottom: 20 }}>
-          {[{ k: 'personal', l: 'Personal', i: 'ti-user' }, { k: 'playing', l: 'Playing', i: 'ti-ball-football' }, { k: 'academy', l: 'Academy', i: 'ti-school' }, { k: 'documents', l: 'Documents', i: 'ti-file' }].map(t => (
-            <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}><i className={`ti ${t.i}`}></i> {t.l}</button>
+          {[{ k: 'personal', l: 'Personal' }, { k: 'playing', l: 'Playing' }, { k: 'academy', l: 'Academy' }, { k: 'documents', l: 'Documents' }].map(t => (
+            <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.l}</button>
           ))}
         </div>
         {tab === 'personal' && (
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
               <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'var(--bg-card2)', border: '0.5px solid var(--border)', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {form.photo_url ? <img src={form.photo_url} alt="Player" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <i className="ti ti-user" style={{ fontSize: 28, color: 'var(--text-dim)' }}></i>}
+                {form.photo_url ? <img src={form.photo_url} alt="Player" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 28, color: 'var(--text-dim)' }}>👤</span>}
               </div>
               <div>
                 <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>
-                  {uploading === 'photo' ? <><i className="ti ti-loader"></i> Uploading...</> : <><i className="ti ti-camera"></i> {form.photo_url ? 'Change photo' : 'Upload photo'}</>}
-                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhoto} capture="user" />
+                  {uploading === 'photo' ? 'Uploading...' : form.photo_url ? 'Change photo' : 'Upload photo'}
+                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhoto} />
                 </label>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Camera or file upload</div>
               </div>
@@ -332,10 +347,10 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
                   <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{label}</div>
-                      {uploaded && <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}><i className="ti ti-check"></i> {uploaded.file_name}</div>}
+                      {uploaded && <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2 }}>✓ {uploaded.file_name}</div>}
                     </div>
                     <label className={`btn btn-sm ${uploaded ? 'btn-ghost' : 'btn-primary'}`} style={{ cursor: 'pointer' }}>
-                      {uploading === key ? <><i className="ti ti-loader"></i> Uploading...</> : uploaded ? <><i className="ti ti-refresh"></i> Replace</> : <><i className="ti ti-upload"></i> Upload</>}
+                      {uploading === key ? 'Uploading...' : uploaded ? 'Replace' : 'Upload'}
                       <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => handleDoc(e, key)} />
                     </label>
                   </div>
@@ -347,7 +362,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
       </div>
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? <><i className="ti ti-loader"></i> Saving...</> : <><i className="ti ti-check"></i> Register player</>}</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Register player'}</button>
       </div>
     </Modal>
   )
@@ -366,7 +381,12 @@ function PlayerDetailModal({ player, club, userRole, onClose }) {
       ])
       setDocs(d || [])
       const ms = s || []
-      setGoals({ goals: ms.reduce((a, b) => a + (b.goals || 0), 0), assists: ms.reduce((a, b) => a + (b.assists || 0), 0), matches: ms.filter(m => m.started).length, rating: ms.filter(m => m.rating).length > 0 ? (ms.reduce((a, b) => a + (parseFloat(b.rating) || 0), 0) / ms.filter(m => m.rating).length).toFixed(1) : null })
+      setGoals({
+        goals: ms.reduce((a, b) => a + (b.goals || 0), 0),
+        assists: ms.reduce((a, b) => a + (b.assists || 0), 0),
+        matches: ms.filter(m => m.started).length,
+        rating: ms.filter(m => m.rating).length > 0 ? (ms.reduce((a, b) => a + (parseFloat(b.rating) || 0), 0) / ms.filter(m => m.rating).length).toFixed(1) : null
+      })
     }
     load()
   }, [player.id])
@@ -378,7 +398,7 @@ function PlayerDetailModal({ player, club, userRole, onClose }) {
       <div className="modal-body">
         <div style={{ display: 'flex', gap: 16, marginBottom: 20, alignItems: 'flex-start' }}>
           <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--bg-card2)', border: '0.5px solid var(--border)', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {player.photo_url ? <img src={player.photo_url} alt={player.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <i className="ti ti-user" style={{ fontSize: 26, color: 'var(--text-dim)' }}></i>}
+            {player.photo_url ? <img src={player.photo_url} alt={player.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 26 }}>👤</span>}
           </div>
           <div>
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>{player.full_name}</div>
@@ -390,7 +410,7 @@ function PlayerDetailModal({ player, club, userRole, onClose }) {
           </div>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 20 }}>
-          {[{ l: 'Goals', v: goals.goals }, { l: 'Assists', v: goals.assists }, { l: 'Matches', v: goals.matches }, { l: 'Rating', v: goals.rating || '\u2014' }].map(s => (
+          {[{ l: 'Goals', v: goals.goals }, { l: 'Assists', v: goals.assists }, { l: 'Matches', v: goals.matches }, { l: 'Rating', v: goals.rating || '—' }].map(s => (
             <div key={s.l} style={{ background: 'var(--bg-card2)', borderRadius: 8, padding: 10, textAlign: 'center', border: '0.5px solid var(--border)' }}>
               <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--btb-gold)' }}>{s.v}</div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{s.l}</div>
@@ -405,26 +425,25 @@ function PlayerDetailModal({ player, club, userRole, onClose }) {
         {tab === 'profile' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {[{ l: 'Date of birth', v: fmtDate(player.date_of_birth) }, { l: 'Nationality', v: player.nationality }, { l: 'ID number', v: player.id_number }, { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, { l: 'Contract start', v: fmtDate(player.contract_start) }, { l: 'Contract end', v: fmtDate(player.contract_end) }].map(({ l, v }) => (
-              <div key={l}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '\u2014'}</div></div>
+              <div key={l}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
         )}
         {tab === 'academy' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {[{ l: 'School', v: player.school_name }, { l: 'Grade / class', v: player.school_grade }, { l: 'Home address', v: player.home_address, full: true }].map(({ l, v, full }) => (
-              <div key={l} style={{ gridColumn: full ? '1 / -1' : 'auto' }}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '\u2014'}</div></div>
+              <div key={l} style={{ gridColumn: full ? '1 / -1' : 'auto' }}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
         )}
         {tab === 'documents' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {docs.length === 0
-              ? <div className="empty" style={{ padding: 24 }}><i className="ti ti-file-off"></i><div className="empty-sub">No documents uploaded</div></div>
+              ? <div className="empty" style={{ padding: 24 }}><div className="empty-sub">No documents uploaded</div></div>
               : docs.map(doc => (
                 <div key={doc.id} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
-                  <i className="ti ti-file-description" style={{ fontSize: 20, color: 'var(--btb-blue)' }}></i>
                   <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{docLabels[doc.doc_type] || doc.doc_type}</div>{doc.file_name && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 1 }}>{doc.file_name}</div>}</div>
-                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm"><i className="ti ti-external-link"></i> View</a>
+                  <a href={doc.file_url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost btn-sm">View</a>
                 </div>
               ))}
           </div>
@@ -442,7 +461,8 @@ function FixturesPage({ club, userRole }) {
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false })
-    setFixtures(data || []); setLoading(false)
+    setFixtures(data || [])
+    setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
@@ -457,12 +477,13 @@ function FixturesPage({ club, userRole }) {
   const filtered = fixtures.filter(f => filter === 'all' || (filter === 'upcoming' && f.status === 'upcoming') || (filter === 'live' && f.status === 'live') || (filter === 'results' && f.status === 'completed'))
 
   if (loading) return <Spinner />
+
   return (
     <div className="page">
       <div className="page-hdr">
-        <div><div className="page-title">Fixtures &amp; Results</div><div className="page-sub">2024/25 season</div></div>
+        <div><div className="page-title">Fixtures & Results</div><div className="page-sub">2024/25 season</div></div>
         {(userRole === 'manager' || userRole === 'coach') && (
-          <button className="btn btn-primary" onClick={() => setShowAdd(true)}><i className="ti ti-calendar-plus"></i> Add fixture</button>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add fixture</button>
         )}
       </div>
       <div className="filter-pills">
@@ -471,7 +492,7 @@ function FixturesPage({ club, userRole }) {
         ))}
       </div>
       {filtered.length === 0
-        ? <div className="empty"><i className="ti ti-calendar"></i><div className="empty-title">No fixtures</div><div className="empty-sub">{userRole === 'manager' ? 'Add your first fixture to get started' : 'No fixtures scheduled'}</div></div>
+        ? <div className="empty"><div className="empty-title">No fixtures</div><div className="empty-sub">{userRole === 'manager' ? 'Add your first fixture to get started' : 'No fixtures scheduled'}</div></div>
         : (
           <div>
             {filtered.map(f => {
@@ -482,18 +503,18 @@ function FixturesPage({ club, userRole }) {
                 <div key={f.id} className={`fixture-item ${isLive ? 'live' : ''}`}>
                   <div className="fixture-date">
                     {isLive && <div className="live-pulse"></div>}
-                    {isLive ? `Live \u00b7 ${f.minute || 0}'` : `${fmtDate(f.match_date)} \u00b7 ${isResult ? 'FT' : fmtTime(f.match_date)}`}
-                    <span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`} style={{ marginLeft: 8 }}>{f.competition}</span>
+                    {isLive ? `Live · ${f.minute || 0}'` : `${fmtDate(f.match_date)} · ${isResult ? 'FT' : fmtTime(f.match_date)}`}
+                    {f.competition && <span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`} style={{ marginLeft: 8 }}>{f.competition}</span>}
                   </div>
                   <div className="fixture-teams">
                     <div className="fixture-team">{homeTeam}</div>
                     <div className={`fixture-score ${isLive ? 'live' : ''}`}>
-                      <div className="score-num">{isResult || isLive ? `${f.home_score ?? 0}\u2013${f.away_score ?? 0}` : 'VS'}</div>
+                      <div className="score-num">{isResult || isLive ? `${f.home_score ?? 0}–${f.away_score ?? 0}` : 'VS'}</div>
                       <div className={`score-label ${isLive ? 'live' : ''}`}>{isLive ? 'Live' : isResult ? 'FT' : f.is_home ? 'Home' : 'Away'}</div>
                     </div>
                     <div className="fixture-team away">{awayTeam}</div>
                   </div>
-                  {f.venue && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 3 }}><i className="ti ti-map-pin" style={{ fontSize: 11 }}></i>{f.venue}</div>}
+                  {f.venue && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>📍 {f.venue}</div>}
                 </div>
               )
             })}
@@ -522,7 +543,7 @@ function AddFixtureModal({ club, onClose, onSaved }) {
   return (
     <Modal title="Add fixture" onClose={onClose}>
       <div className="modal-body">
-        {error && <div className="alert alert-red"><i className="ti ti-alert-circle"></i>{error}</div>}
+        {error && <div className="alert alert-red">{error}</div>}
         <div className="form-grid">
           <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Opponent *</label><input value={form.opponent} onChange={e => set('opponent', e.target.value)} placeholder="e.g. Nyeri United FC" /></div>
           <div className="form-group"><label>Competition</label><select value={form.competition} onChange={e => set('competition', e.target.value)}>{['KPL', 'FKF Cup', 'Super Cup', 'Friendly', 'Regional League', 'Academy League', 'Other'].map(c => <option key={c}>{c}</option>)}</select></div>
@@ -534,7 +555,7 @@ function AddFixtureModal({ club, onClose, onSaved }) {
       </div>
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : <><i className="ti ti-check"></i> Save fixture</>}</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save fixture'}</button>
       </div>
     </Modal>
   )
@@ -555,7 +576,8 @@ function MatchCentrePage({ club }) {
         supabase.from('fixtures').select('*').eq('club_id', club.id).in('status', ['live', 'upcoming']).order('match_date', { ascending: true }).limit(5),
         supabase.from('players').select('id,full_name,squad_number,position').eq('club_id', club.id).eq('is_active', true).order('squad_number', { ascending: true })
       ])
-      setFixtures(f || []); setPlayers(p || [])
+      setFixtures(f || [])
+      setPlayers(p || [])
       const live = (f || []).find(x => x.status === 'live') || (f || [])[0]
       if (live) {
         setSelected(live)
@@ -575,7 +597,8 @@ function MatchCentrePage({ club }) {
         setEvents(prev => [data, ...prev])
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'sportspulse', table: 'fixtures', filter: `id=eq.${selected.id}` }, payload => {
-        setSelected(payload.new); setFixtures(prev => prev.map(f => f.id === payload.new.id ? payload.new : f))
+        setSelected(payload.new)
+        setFixtures(prev => prev.map(f => f.id === payload.new.id ? payload.new : f))
       })
       .subscribe()
     return () => supabase.removeChannel(ch)
@@ -590,49 +613,51 @@ function MatchCentrePage({ club }) {
     await supabase.from('match_events').insert({ fixture_id: selected.id, club_id: club.id, event_type: logForm.event_type, minute: parseInt(logForm.minute), player_id: logForm.player_id || null })
     if (logForm.event_type === 'goal' && selected.is_home) await supabase.from('fixtures').update({ home_score: (selected.home_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
     if (logForm.event_type === 'goal' && !selected.is_home) await supabase.from('fixtures').update({ away_score: (selected.away_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
-    setLogForm(prev => ({ ...prev, minute: '', player_id: '' })); setSaving(false)
+    setLogForm(prev => ({ ...prev, minute: '', player_id: '' }))
+    setSaving(false)
   }
 
-  const eventIcon = { goal: '\u26bd', yellow_card: '\U0001f7e8', red_card: '\U0001f7e5', substitution: '\U0001f504', penalty: '\u26bd', own_goal: '\u26bd' }
+  const eventIcon = { goal: '⚽', yellow_card: '🟨', red_card: '🟥', substitution: '🔄', penalty: '⚽', own_goal: '⚽' }
 
   if (loading) return <Spinner />
+
   return (
     <div className="page">
       <div className="page-hdr">
         <div><div className="page-title">Match centre</div><div className="page-sub">{selected ? `${club.short_name} vs ${selected.opponent}` : 'No active match'}</div></div>
         <div className="page-actions">
-          {selected?.status === 'upcoming' && <button className="btn btn-gold" onClick={startMatch}><i className="ti ti-player-play"></i> Start match</button>}
-          {selected?.status === 'live' && <button className="btn btn-danger" onClick={endMatch}><i className="ti ti-player-stop"></i> End match</button>}
+          {selected?.status === 'upcoming' && <button className="btn btn-primary" onClick={startMatch}>▶ Start match</button>}
+          {selected?.status === 'live' && <button className="btn btn-danger" onClick={endMatch}>■ End match</button>}
         </div>
       </div>
       {fixtures.length > 1 && (
         <div className="filter-pills" style={{ marginBottom: 20 }}>
           {fixtures.map(f => (
             <button key={f.id} className={`pill ${selected?.id === f.id ? 'active' : ''}`} onClick={async () => { setSelected(f); const { data } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', f.id).order('minute', { ascending: false }); setEvents(data || []) }}>
-              {f.opponent} \u00b7 {fmtDate(f.match_date)}
+              {f.opponent} · {fmtDate(f.match_date)}
             </button>
           ))}
         </div>
       )}
       {!selected
-        ? <div className="empty"><i className="ti ti-live-view"></i><div className="empty-title">No upcoming or live matches</div><div className="empty-sub">Add a fixture first to use the match centre</div></div>
+        ? <div className="empty"><div className="empty-title">No upcoming or live matches</div><div className="empty-sub">Add a fixture first to use the match centre</div></div>
         : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 16 }}>
             <div>
               <div className="match-hero">
                 <div className="match-hero-label">
                   {selected.status === 'live' && <div className="live-pulse"></div>}
-                  {selected.competition} \u00b7 {fmtDate(selected.match_date)} \u00b7 {selected.venue || 'Venue TBC'}
+                  {selected.competition} · {fmtDate(selected.match_date)} · {selected.venue || 'Venue TBC'}
                 </div>
                 <div className="match-hero-teams">
                   <div className="match-hero-team"><div className="match-hero-team-name">{selected.is_home ? club.name : selected.opponent}</div><div className="match-hero-team-sub">Home</div></div>
-                  <div><div className="match-hero-score">{selected.home_score ?? 0} \u2013 {selected.away_score ?? 0}</div><div className="match-hero-minute">{selected.status === 'live' ? `${selected.minute}'` : selected.status.toUpperCase()}</div></div>
+                  <div><div className="match-hero-score">{selected.home_score ?? 0} – {selected.away_score ?? 0}</div><div className="match-hero-minute">{selected.status === 'live' ? `${selected.minute}'` : selected.status.toUpperCase()}</div></div>
                   <div className="match-hero-team"><div className="match-hero-team-name">{selected.is_home ? selected.opponent : club.name}</div><div className="match-hero-team-sub">Away</div></div>
                 </div>
                 {selected.status === 'live' && (
                   <div className="match-hero-actions">
-                    {[{ type: 'goal', icon: 'ti-ball-football', label: 'Goal' }, { type: 'yellow_card', icon: 'ti-rectangle-vertical', label: 'Yellow' }, { type: 'red_card', icon: 'ti-rectangle-vertical', label: 'Red' }, { type: 'substitution', icon: 'ti-arrows-exchange', label: 'Sub' }].map(a => (
-                      <button key={a.type} className="match-action-btn" onClick={() => setLogForm(prev => ({ ...prev, event_type: a.type }))}><i className={`ti ${a.icon}`}></i> {a.label}</button>
+                    {[{ type: 'goal', label: '⚽ Goal' }, { type: 'yellow_card', label: '🟨 Yellow' }, { type: 'red_card', label: '🟥 Red' }, { type: 'substitution', label: '🔄 Sub' }].map(a => (
+                      <button key={a.type} className="match-action-btn" onClick={() => setLogForm(prev => ({ ...prev, event_type: a.type }))}>{a.label}</button>
                     ))}
                   </div>
                 )}
@@ -642,19 +667,19 @@ function MatchCentrePage({ club }) {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'flex-end' }}>
                     <div className="form-group"><label>Event</label><select value={logForm.event_type} onChange={e => setLogForm(p => ({ ...p, event_type: e.target.value }))}><option value="goal">Goal</option><option value="yellow_card">Yellow card</option><option value="red_card">Red card</option><option value="substitution">Substitution</option><option value="penalty">Penalty</option></select></div>
                     <div className="form-group"><label>Minute *</label><input type="number" min="1" max="120" placeholder="e.g. 23" value={logForm.minute} onChange={e => setLogForm(p => ({ ...p, minute: e.target.value }))} /></div>
-                    <div className="form-group"><label>Player</label><select value={logForm.player_id} onChange={e => setLogForm(p => ({ ...p, player_id: e.target.value }))}><option value="">Select player</option>{players.map(p => <option key={p.id} value={p.id}>{p.squad_number} \u2013 {p.full_name}</option>)}</select></div>
-                    <button className="btn btn-primary" onClick={logEvent} disabled={saving || !logForm.minute}>{saving ? <i className="ti ti-loader"></i> : <><i className="ti ti-plus"></i> Log</>}</button>
+                    <div className="form-group"><label>Player</label><select value={logForm.player_id} onChange={e => setLogForm(p => ({ ...p, player_id: e.target.value }))}><option value="">Select player</option>{players.map(p => <option key={p.id} value={p.id}>{p.squad_number} – {p.full_name}</option>)}</select></div>
+                    <button className="btn btn-primary" onClick={logEvent} disabled={saving || !logForm.minute}>+ Log</button>
                   </div>
                 </div>
               )}
               <div className="card">
                 <div className="card-hdr"><div className="card-title">Match events</div></div>
                 {events.length === 0
-                  ? <div className="empty" style={{ padding: 24 }}><i className="ti ti-list"></i><div className="empty-sub">No events logged yet</div></div>
+                  ? <div className="empty" style={{ padding: 24 }}><div className="empty-sub">No events logged yet</div></div>
                   : events.map(evt => (
                     <div key={evt.id} className="activity-item" style={{ padding: '10px 16px' }}>
-                      <span style={{ fontSize: 14 }}>{eventIcon[evt.event_type] || '\U0001f4cb'}</span>
-                      <div className="activity-text"><strong>{evt.minute}'</strong> {evt.event_type.replace('_', ' ')}{evt.player && <> \u2014 <strong>{evt.player.full_name}</strong></>}</div>
+                      <span style={{ fontSize: 14 }}>{eventIcon[evt.event_type] || '📋'}</span>
+                      <div className="activity-text"><strong>{evt.minute}'</strong> {evt.event_type.replace('_', ' ')}{evt.player && <> — <strong>{evt.player.full_name}</strong></>}</div>
                     </div>
                   ))}
               </div>
@@ -684,20 +709,22 @@ function TrainingPage({ club, userRole }) {
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('training_sessions').select('*').eq('club_id', club.id).order('session_date', { ascending: false })
-    setSessions(data || []); setLoading(false)
+    setSessions(data || [])
+    setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
 
   if (loading) return <Spinner />
+
   return (
     <div className="page">
       <div className="page-hdr">
         <div><div className="page-title">Training</div><div className="page-sub">Session schedule and attendance</div></div>
-        {(userRole === 'manager' || userRole === 'coach') && <button className="btn btn-primary" onClick={() => setShowAdd(true)}><i className="ti ti-plus"></i> Add session</button>}
+        {(userRole === 'manager' || userRole === 'coach') && <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add session</button>}
       </div>
       {sessions.length === 0
-        ? <div className="empty"><i className="ti ti-run"></i><div className="empty-title">No training sessions</div><div className="empty-sub">Schedule your first training session</div></div>
+        ? <div className="empty"><div className="empty-title">No training sessions</div><div className="empty-sub">Schedule your first training session</div></div>
         : (
           <div className="card">
             <div className="table-wrap">
@@ -710,7 +737,7 @@ function TrainingPage({ club, userRole }) {
                       <td><strong>{s.title}</strong>{s.notes && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{s.notes}</div>}</td>
                       <td><span className="badge badge-blue">{s.session_type}</span></td>
                       <td>{s.duration_mins} min</td>
-                      <td>{s.venue || '\u2014'}</td>
+                      <td>{s.venue || '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -768,7 +795,9 @@ function FeesPage({ club }) {
       supabase.from('fees').select('*, player:players(full_name,squad_number)').eq('club_id', club.id).order('created_at', { ascending: false }),
       supabase.from('players').select('id,full_name,squad_number').eq('club_id', club.id).eq('is_active', true)
     ])
-    setFees(f || []); setPlayers(p || []); setLoading(false)
+    setFees(f || [])
+    setPlayers(p || [])
+    setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
@@ -777,15 +806,16 @@ function FeesPage({ club }) {
   const totalCollected = fees.reduce((s, f) => s + (f.paid_amount || 0), 0)
 
   if (loading) return <Spinner />
+
   return (
     <div className="page">
       <div className="page-hdr">
         <div><div className="page-title">Fee management</div><div className="page-sub">Academy program fees</div></div>
-        <button className="btn btn-primary" onClick={() => setShowAdd(true)}><i className="ti ti-plus"></i> Add fee</button>
+        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add fee</button>
       </div>
       <div className="stat-grid" style={{ marginBottom: 20 }}>
-        <div className="stat-card"><div className="stat-label"><i className="ti ti-cash"></i> Pending</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalPending)}</div><div className="stat-change down">Outstanding</div></div>
-        <div className="stat-card"><div className="stat-label"><i className="ti ti-check"></i> Collected</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalCollected)}</div><div className="stat-change up">Received</div></div>
+        <div className="stat-card"><div className="stat-label">Pending</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalPending)}</div><div className="stat-change down">Outstanding</div></div>
+        <div className="stat-card"><div className="stat-label">Collected</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalCollected)}</div><div className="stat-change up">Received</div></div>
       </div>
       <div className="card">
         <div className="table-wrap">
@@ -793,13 +823,13 @@ function FeesPage({ club }) {
             <thead><tr><th>Player</th><th>Description</th><th>Amount</th><th>Paid</th><th>Due</th><th>Status</th></tr></thead>
             <tbody>
               {fees.length === 0
-                ? <tr><td colSpan={6}><div className="empty"><i className="ti ti-cash"></i><div className="empty-sub">No fees recorded yet</div></div></td></tr>
+                ? <tr><td colSpan={6}><div className="empty"><div className="empty-sub">No fees recorded yet</div></div></td></tr>
                 : fees.map(f => (
                   <tr key={f.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div className="avatar avatar-sm">{initials(f.player?.full_name)}</div>
-                        <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.player?.full_name || '\u2014'}</div>{f.term && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.term}</div>}</div>
+                        <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.player?.full_name || '—'}</div>{f.term && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.term}</div>}</div>
                       </div>
                     </td>
                     <td>{f.description}</td>
@@ -849,404 +879,6 @@ function AddFeeModal({ club, players, onClose, onSaved }) {
   )
 }
 
-// ── PLAYER DASHBOARD ─────────────────────────────────────────────────────────
-function PlayerDashboard({ profile, clubId }) {
-  const [stats, setStats] = useState(null)
-  const [upcomingTraining, setUpcomingTraining] = useState([])
-  const [upcomingFixtures, setUpcomingFixtures] = useState([])
-  const [fees, setFees] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    async function load() {
-      // Get player record
-      const { data: player } = await supabase
-        .from('players')
-        .select('*')
-        .eq('profile_id', profile.id)
-        .single()
-
-      if (!player) { setLoading(false); return }
-
-      const [trainingRes, fixturesRes, feesRes, statsRes] = await Promise.all([
-        supabase.from('training_sessions').select('*').eq('club_id', clubId).gte('session_date', new Date().toISOString().split('T')[0]).order('session_date').limit(5),
-        supabase.from('fixtures').select('*').eq('club_id', clubId).eq('status', 'scheduled').gte('match_date', new Date().toISOString()).order('match_date').limit(3),
-        supabase.from('fees').select('*').eq('player_id', player.id).order('created_at', { ascending: false }),
-        supabase.from('player_match_stats').select('*, fixtures(opponent, match_date)').eq('player_id', player.id).order('created_at', { ascending: false }).limit(10),
-      ])
-
-      setUpcomingTraining(trainingRes.data || [])
-      setUpcomingFixtures(fixturesRes.data || [])
-      setFees(feesRes.data || [])
-
-      const s = statsRes.data || []
-      setStats({
-        player,
-        goals: s.reduce((a, x) => a + (x.goals || 0), 0),
-        assists: s.reduce((a, x) => a + (x.assists || 0), 0),
-        appearances: s.length,
-        yellowCards: s.reduce((a, x) => a + (x.yellow_cards || 0), 0),
-        recentMatches: s.slice(0, 5),
-      })
-      setLoading(false)
-    }
-    load()
-  }, [profile.id, clubId])
-
-  if (loading) return <div className="page-loading"><Spinner /><p>Loading your dashboard...</p></div>
-  if (!stats) return <div className="page-loading"><p>Player profile not set up yet. Contact your coach.</p></div>
-
-  const pendingFees = fees.filter(f => f.status === 'pending' || f.status === 'overdue')
-  const totalOwed = pendingFees.reduce((a, f) => a + Number(f.amount), 0)
-
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">My Dashboard</h1>
-          <p className="page-subtitle">{stats.player.position || 'Player'} · #{stats.player.squad_number || '—'}</p>
-        </div>
-      </div>
-
-      {pendingFees.length > 0 && (
-        <div className="alert alert-warning" style={{ marginBottom: '1.5rem', padding: '1rem 1.25rem', background: 'rgba(245,200,66,0.1)', border: '1px solid rgba(245,200,66,0.3)', borderRadius: '0.75rem', color: '#f5c842' }}>
-          ⚠ You have {pendingFees.length} pending fee{pendingFees.length > 1 ? 's' : ''} totalling <strong>{fmtKES(totalOwed)}</strong>. Contact the academy.
-        </div>
-      )}
-
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-        <div className="stat-card"><div className="stat-number">{stats.appearances}</div><div className="stat-label">Appearances</div></div>
-        <div className="stat-card"><div className="stat-number">{stats.goals}</div><div className="stat-label">Goals</div></div>
-        <div className="stat-card"><div className="stat-number">{stats.assists}</div><div className="stat-label">Assists</div></div>
-        <div className="stat-card"><div className="stat-number">{stats.yellowCards}</div><div className="stat-label">Yellow Cards</div></div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
-        <div className="card">
-          <div className="card-header"><h3 className="card-title">Upcoming Training</h3></div>
-          {upcomingTraining.length === 0 ? <p className="empty-state">No sessions scheduled</p> : upcomingTraining.map(s => (
-            <div key={s.id} className="list-item">
-              <div>
-                <div className="item-title">{s.focus || s.session_type}</div>
-                <div className="item-sub">{fmtDate(s.session_date)} · {s.location || 'Home ground'}</div>
-              </div>
-              <span className="badge badge-blue">{fmtTime(s.start_time)}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="card">
-          <div className="card-header"><h3 className="card-title">Upcoming Matches</h3></div>
-          {upcomingFixtures.length === 0 ? <p className="empty-state">No matches scheduled</p> : upcomingFixtures.map(f => (
-            <div key={f.id} className="list-item">
-              <div>
-                <div className="item-title">vs {f.opponent}</div>
-                <div className="item-sub">{fmtDate(f.match_date)} · {f.is_home ? 'Home' : 'Away'}</div>
-              </div>
-              <span className="badge badge-blue">{f.competition || 'Friendly'}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── PARENT DASHBOARD ─────────────────────────────────────────────────────────
-function ParentDashboard({ profile, clubId }) {
-  const [children, setChildren] = useState([])
-  const [selectedChild, setSelectedChild] = useState(null)
-  const [fees, setFees] = useState([])
-  const [fixtures, setFixtures] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    async function load() {
-      const { data: links } = await supabase
-        .from('parent_player_links')
-        .select('*, players(*)')
-        .eq('parent_profile_id', profile.id)
-
-      const kids = (links || []).map(l => l.players).filter(Boolean)
-      setChildren(kids)
-      if (kids.length > 0) setSelectedChild(kids[0])
-      setLoading(false)
-    }
-    load()
-  }, [profile.id])
-
-  useEffect(() => {
-    if (!selectedChild) return
-    Promise.all([
-      supabase.from('fees').select('*').eq('player_id', selectedChild.id).order('due_date'),
-      supabase.from('fixtures').select('*').eq('club_id', clubId).eq('status', 'scheduled').gte('match_date', new Date().toISOString()).order('match_date').limit(5),
-    ]).then(([feesRes, fixRes]) => {
-      setFees(feesRes.data || [])
-      setFixtures(fixRes.data || [])
-    })
-  }, [selectedChild, clubId])
-
-  if (loading) return <div className="page-loading"><Spinner /><p>Loading...</p></div>
-  if (children.length === 0) return <div className="page-loading"><p>No children linked to your account. Contact the academy.</p></div>
-
-  const pending = fees.filter(f => f.status === 'pending' || f.status === 'overdue')
-  const paid = fees.filter(f => f.status === 'paid')
-
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Parent Portal</h1>
-          <p className="page-subtitle">Tracking {children.length} player{children.length > 1 ? 's' : ''}</p>
-        </div>
-      </div>
-
-      {children.length > 1 && (
-        <div className="filter-pills" style={{ marginBottom: '1.5rem' }}>
-          {children.map(c => (
-            <button key={c.id} className={`filter-pill ${selectedChild?.id === c.id ? 'active' : ''}`} onClick={() => setSelectedChild(c)}>
-              {c.full_name}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {selectedChild && (
-        <>
-          <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: '1.5rem' }}>
-            <div className="stat-card"><div className="stat-number">{pending.length}</div><div className="stat-label">Pending Fees</div></div>
-            <div className="stat-card"><div className="stat-number">{fmtKES(pending.reduce((a, f) => a + Number(f.amount), 0))}</div><div className="stat-label">Amount Due</div></div>
-            <div className="stat-card"><div className="stat-number">{fmtKES(paid.reduce((a, f) => a + Number(f.amount), 0))}</div><div className="stat-label">Total Paid</div></div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-            <div className="card">
-              <div className="card-header"><h3 className="card-title">Fees — {selectedChild.full_name}</h3></div>
-              {fees.length === 0 ? <p className="empty-state">No fees recorded</p> : fees.map(f => (
-                <div key={f.id} className="list-item">
-                  <div>
-                    <div className="item-title">{f.description}</div>
-                    <div className="item-sub">{f.term || ''}{f.due_date ? ` · Due ${fmtDate(f.due_date)}` : ''}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontWeight: 600 }}>{fmtKES(f.amount)}</div>
-                    <span className={`badge ${f.status === 'paid' ? 'badge-green' : f.status === 'overdue' ? 'badge-red' : 'badge-yellow'}`}>{f.status}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="card">
-              <div className="card-header"><h3 className="card-title">Upcoming Fixtures</h3></div>
-              {fixtures.length === 0 ? <p className="empty-state">No upcoming matches</p> : fixtures.map(f => (
-                <div key={f.id} className="list-item">
-                  <div>
-                    <div className="item-title">vs {f.opponent}</div>
-                    <div className="item-sub">{fmtDate(f.match_date)} · {f.is_home ? 'Home' : 'Away'}</div>
-                  </div>
-                  <span className="badge badge-blue">{fmtTime(f.match_time)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-// ── FAN APP ───────────────────────────────────────────────────────────────────
-function FanApp({ club }) {
-  const [tab, setTab] = useState('home')
-  const [fixtures, setFixtures] = useState([])
-  const [players, setPlayers] = useState([])
-  const [liveMatch, setLiveMatch] = useState(null)
-  const [loading, setLoading] = useState(true)
-
-  useEffect(() => {
-    async function load() {
-      const [fixRes, playRes, liveRes] = await Promise.all([
-        supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false }).limit(20),
-        supabase.from('players').select('id, full_name, position, squad_number, photo_url, nationality').eq('club_id', club.id).eq('status', 'active').order('squad_number'),
-        supabase.from('fixtures').select('*, match_events(*)').eq('club_id', club.id).eq('status', 'live').single(),
-      ])
-      setFixtures(fixRes.data || [])
-      setPlayers(playRes.data || [])
-      setLiveMatch(liveRes.data)
-      setLoading(false)
-    }
-    load()
-
-    const channel = supabase.channel('fan-live')
-      .on('postgres_changes', { event: '*', schema: 'sportspulse', table: 'fixtures', filter: `club_id=eq.${club.id}` }, () => load())
-      .subscribe()
-    return () => supabase.removeChannel(channel)
-  }, [club.id])
-
-  const upcoming = fixtures.filter(f => f.status === 'scheduled').sort((a, b) => new Date(a.match_date) - new Date(b.match_date))
-  const past = fixtures.filter(f => f.status === 'completed').sort((a, b) => new Date(b.match_date) - new Date(a.match_date))
-  const lastResult = past[0]
-
-  const tabs = [
-    { id: 'home', label: '🏠 Home' },
-    { id: 'fixtures', label: '📅 Fixtures' },
-    { id: 'squad', label: '👥 Squad' },
-    { id: 'tickets', label: '🎟 Tickets' },
-  ]
-
-  return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-      {/* Fan Header */}
-      <div style={{ background: 'linear-gradient(135deg, var(--royal-blue), #0f2d8a)', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem', position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.85rem', color: '#000' }}>BTB</div>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Beyond the Ball</div>
-          <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)' }}>Fan Zone · Nyeri, Kenya</div>
-        </div>
-        {liveMatch && <div style={{ marginLeft: 'auto', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 700, padding: '0.2rem 0.5rem', borderRadius: '0.25rem', animation: 'pulse 1s infinite' }}>● LIVE</div>}
-      </div>
-
-      {/* Content */}
-      <div style={{ padding: '1rem 1.25rem', paddingBottom: '5rem' }}>
-        {loading ? <div style={{ textAlign: 'center', padding: '3rem' }}><Spinner /></div> : (
-          <>
-            {tab === 'home' && (
-              <div>
-                {liveMatch && (
-                  <div style={{ background: 'linear-gradient(135deg, #1a1a2e, #16213e)', border: '2px solid var(--royal-blue)', borderRadius: '1rem', padding: '1.25rem', marginBottom: '1.5rem', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: '#ef4444', marginBottom: '0.5rem' }}>● LIVE MATCH</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>{liveMatch.competition || 'Match'}</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>BTB <span style={{ color: 'var(--gold)' }}>{liveMatch.home_score ?? 0} — {liveMatch.away_score ?? 0}</span> {liveMatch.opponent}</div>
-                    {liveMatch.match_events?.length > 0 && (
-                      <div style={{ marginTop: '0.75rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        {liveMatch.match_events.slice(-3).map(e => (
-                          <div key={e.id}>{e.minute}' {e.event_type === 'goal' ? '⚽' : e.event_type === 'yellow_card' ? '🟨' : e.event_type === 'red_card' ? '🟥' : '🔄'} {e.player_name}</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {!liveMatch && upcoming[0] && (
-                  <div style={{ background: 'linear-gradient(135deg, #0d1b3e, #1a2744)', border: '1px solid rgba(26,75,219,0.4)', borderRadius: '1rem', padding: '1.25rem', marginBottom: '1.5rem', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--gold)', marginBottom: '0.5rem' }}>NEXT MATCH</div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.25rem' }}>BTB vs {upcoming[0].opponent}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{fmtDate(upcoming[0].match_date)} · {fmtTime(upcoming[0].match_time)} · {upcoming[0].is_home ? 'PCEA Primary Pitch' : 'Away'}</div>
-                    {upcoming[0].competition && <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'var(--gold)' }}>{upcoming[0].competition}</div>}
-                  </div>
-                )}
-
-                {lastResult && (
-                  <div style={{ background: 'var(--bg-card)', borderRadius: '1rem', padding: '1rem 1.25rem', marginBottom: '1.5rem' }}>
-                    <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>LAST RESULT</div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ fontWeight: 700 }}>BTB {lastResult.home_score} — {lastResult.away_score} {lastResult.opponent}</div>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{fmtDate(lastResult.match_date)}</span>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ background: 'var(--bg-card)', borderRadius: '1rem', padding: '1rem 1.25rem' }}>
-                  <div style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>ABOUT BTB</div>
-                  <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>Beyond the Ball Sports Academy is a youth football academy based in Nyeri, Kenya, dedicated to developing the next generation of Kenyan football talent. Founded in 2022.</p>
-                </div>
-              </div>
-            )}
-
-            {tab === 'fixtures' && (
-              <div>
-                {upcoming.length > 0 && (
-                  <>
-                    <h3 style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>UPCOMING</h3>
-                    {upcoming.map(f => (
-                      <div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: '0.75rem', padding: '1rem', marginBottom: '0.75rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                          <div>
-                            <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>BTB vs {f.opponent}</div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fmtDate(f.match_date)} · {fmtTime(f.match_time)}</div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{f.is_home ? 'PCEA Primary Pitch, Nyeri' : f.venue || 'Away'}</div>
-                          </div>
-                          {f.competition && <span style={{ fontSize: '0.7rem', background: 'rgba(26,75,219,0.2)', color: 'var(--royal-blue)', padding: '0.2rem 0.5rem', borderRadius: '0.25rem' }}>{f.competition}</span>}
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-                {past.length > 0 && (
-                  <>
-                    <h3 style={{ fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text-muted)', margin: '1rem 0 0.75rem' }}>RESULTS</h3>
-                    {past.slice(0, 10).map(f => {
-                      const won = f.is_home ? f.home_score > f.away_score : f.away_score > f.home_score
-                      const drew = f.home_score === f.away_score
-                      return (
-                        <div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: '0.75rem', padding: '1rem', marginBottom: '0.75rem', borderLeft: `3px solid ${drew ? '#888' : won ? '#22c55e' : '#ef4444'}` }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ fontWeight: 700 }}>BTB {f.home_score} — {f.away_score} {f.opponent}</span>
-                            <span style={{ fontSize: '0.75rem', color: drew ? '#888' : won ? '#22c55e' : '#ef4444', fontWeight: 700 }}>{drew ? 'D' : won ? 'W' : 'L'}</span>
-                          </div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>{fmtDate(f.match_date)}</div>
-                        </div>
-                      )
-                    })}
-                  </>
-                )}
-                {fixtures.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 0' }}>No fixtures yet</p>}
-              </div>
-            )}
-
-            {tab === 'squad' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                {players.map(p => (
-                  <div key={p.id} style={{ background: 'var(--bg-card)', borderRadius: '0.75rem', padding: '1rem', textAlign: 'center' }}>
-                    {p.photo_url ? (
-                      <img src={p.photo_url} alt={p.full_name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', marginBottom: '0.5rem', border: '2px solid var(--royal-blue)' }} />
-                    ) : (
-                      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(26,75,219,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.5rem', fontSize: '1.25rem', fontWeight: 700, color: 'var(--royal-blue)' }}>{p.squad_number || initials(p.full_name)}</div>
-                    )}
-                    <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{p.full_name}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.position || 'Player'}</div>
-                  </div>
-                ))}
-                {players.length === 0 && <div style={{ gridColumn: '1/-1', textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 0' }}>Squad not published</div>}
-              </div>
-            )}
-
-            {tab === 'tickets' && (
-              <div style={{ textAlign: 'center', padding: '2rem 0' }}>
-                <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🎟</div>
-                <h2 style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Match Day Tickets</h2>
-                <p style={{ color: 'var(--text-muted)', marginBottom: '2rem', fontSize: '0.875rem' }}>Pay via M-Pesa to secure your seat at the next BTB home match.</p>
-                {upcoming[0] ? (
-                  <div style={{ background: 'var(--bg-card)', borderRadius: '1rem', padding: '1.5rem', marginBottom: '1.5rem' }}>
-                    <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>BTB vs {upcoming[0].opponent}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>{fmtDate(upcoming[0].match_date)} · PCEA Primary Pitch</div>
-                    <a href={`https://wa.me/254${club.whatsapp_number?.replace(/^0/, '')}?text=I'd like to buy a ticket for the BTB vs ${upcoming[0].opponent} match on ${fmtDate(upcoming[0].match_date)}`} target="_blank" rel="noreferrer" style={{ display: 'inline-block', background: '#25D366', color: '#fff', fontWeight: 700, padding: '0.75rem 2rem', borderRadius: '0.5rem', textDecoration: 'none', fontSize: '0.9rem' }}>
-                      💬 Buy via WhatsApp
-                    </a>
-                  </div>
-                ) : (
-                  <p style={{ color: 'var(--text-muted)' }}>No upcoming home matches</p>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Fan Bottom Nav */}
-      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'var(--bg-nav)', borderTop: '1px solid var(--border-color)', display: 'flex', zIndex: 200 }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: '0.75rem 0.5rem', background: 'none', border: 'none', color: tab === t.id ? 'var(--gold)' : 'var(--text-muted)', fontSize: '0.7rem', fontWeight: tab === t.id ? 700 : 400, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.1rem' }}>
-            <span style={{ fontSize: '1.1rem' }}>{t.label.split(' ')[0]}</span>
-            <span>{t.label.split(' ').slice(1).join(' ')}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-// ── MESSAGES PAGE ─────────────────────────────────────────────────────────────
 function MessagesPage({ profile, clubId }) {
   const [messages, setMessages] = useState([])
   const [showCompose, setShowCompose] = useState(false)
@@ -1267,37 +899,27 @@ function MessagesPage({ profile, clubId }) {
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Messages</h1>
-          <p className="page-subtitle">Club communications</p>
-        </div>
+      <div className="page-hdr">
+        <div><div className="page-title">Messages</div><div className="page-sub">Club communications</div></div>
         {(profile.role === 'manager' || profile.role === 'coach') && (
           <button className="btn btn-primary" onClick={() => setShowCompose(true)}>+ Compose</button>
         )}
       </div>
-
       <div className="card">
         {loading ? <div style={{ padding: '2rem', textAlign: 'center' }}><Spinner /></div> :
-          messages.length === 0 ? <p className="empty-state">No messages yet</p> :
+          messages.length === 0 ? <div className="empty" style={{ padding: 32 }}><div className="empty-sub">No messages yet</div></div> :
           messages.map(m => (
-            <div key={m.id} className="list-item" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                <div>
-                  <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{m.subject}</span>
-                  {m.is_pinned && <span style={{ marginLeft: '0.5rem', fontSize: '0.7rem', background: 'rgba(245,200,66,0.15)', color: 'var(--gold)', padding: '0.1rem 0.4rem', borderRadius: '0.25rem' }}>📌 Pinned</span>}
-                </div>
+            <div key={m.id} style={{ padding: '14px 16px', borderBottom: '0.5px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>{m.subject}{m.is_pinned && <span style={{ marginLeft: 8, fontSize: '0.7rem', background: 'rgba(245,200,66,0.15)', color: 'var(--btb-gold)', padding: '0.1rem 0.4rem', borderRadius: 4 }}>📌 Pinned</span>}</div>
                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{timeAgo(m.sent_at)}</span>
               </div>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{m.body}</p>
-              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                From: {m.sender?.full_name || 'Academy'} · To: {m.recipient_type === 'all' ? 'Everyone' : m.recipient_type}
-              </div>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.5 }}>{m.body}</p>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>From: {m.sender?.full_name || 'Academy'} · To: {m.recipient_type === 'all' ? 'Everyone' : m.recipient_type}</div>
             </div>
           ))
         }
       </div>
-
       {showCompose && <ComposeModal clubId={clubId} senderId={profile.id} onClose={() => { setShowCompose(false); load() }} />}
     </div>
   )
@@ -1312,35 +934,20 @@ function ComposeModal({ clubId, senderId, onClose }) {
     if (!form.subject.trim() || !form.body.trim()) { alert('Subject and message required'); return }
     setSaving(true)
     await supabase.from('messages').insert({ ...form, club_id: clubId, sender_id: senderId, sent_at: new Date().toISOString() })
-    setSaving(false)
-    onClose()
+    setSaving(false); onClose()
   }
 
   return (
     <Modal title="Compose message" onClose={onClose}>
       <div className="modal-body">
         <div className="form-grid">
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-            <label>Subject *</label>
-            <input value={form.subject} onChange={e => set('subject', e.target.value)} placeholder="e.g. Training cancelled this Friday" />
-          </div>
-          <div className="form-group">
-            <label>Send to</label>
-            <select value={form.recipient_type} onChange={e => set('recipient_type', e.target.value)}>
-              <option value="all">Everyone</option>
-              <option value="players">Players only</option>
-              <option value="parents">Parents only</option>
-              <option value="coaches">Coaches only</option>
-            </select>
-          </div>
-          <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingTop: '1.5rem' }}>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Subject *</label><input value={form.subject} onChange={e => set('subject', e.target.value)} placeholder="e.g. Training cancelled this Friday" /></div>
+          <div className="form-group"><label>Send to</label><select value={form.recipient_type} onChange={e => set('recipient_type', e.target.value)}><option value="all">Everyone</option><option value="players">Players only</option><option value="parents">Parents only</option><option value="coaches">Coaches only</option></select></div>
+          <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 24 }}>
             <input type="checkbox" id="pin" checked={form.is_pinned} onChange={e => set('is_pinned', e.target.checked)} style={{ width: 'auto' }} />
             <label htmlFor="pin" style={{ margin: 0 }}>Pin this message</label>
           </div>
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-            <label>Message *</label>
-            <textarea value={form.body} onChange={e => set('body', e.target.value)} placeholder="Write your message here..." rows={5} style={{ resize: 'vertical' }} />
-          </div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Message *</label><textarea value={form.body} onChange={e => set('body', e.target.value)} placeholder="Write your message here..." rows={5} style={{ resize: 'vertical' }} /></div>
         </div>
       </div>
       <div className="modal-footer">
@@ -1351,105 +958,80 @@ function ComposeModal({ clubId, senderId, onClose }) {
   )
 }
 
-// ── ANALYTICS PAGE ────────────────────────────────────────────────────────────
 function AnalyticsPage({ clubId }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
-      const [statsRes, fixturesRes, feesRes] = await Promise.all([
-        supabase.from('player_match_stats').select('*, players(full_name, squad_number)').eq('players.club_id', clubId),
+      const [statsRes, fixturesRes] = await Promise.all([
+        supabase.from('player_match_stats').select('*, players(full_name)'),
         supabase.from('fixtures').select('*').eq('club_id', clubId),
-        supabase.from('fees').select('*').eq('players.club_id', clubId),
       ])
-
       const stats = statsRes.data || []
       const fixtures = fixturesRes.data || []
-
-      // Top scorers
       const scorerMap = {}
       stats.forEach(s => {
         if (!s.players) return
         const name = s.players.full_name
         scorerMap[name] = (scorerMap[name] || 0) + (s.goals || 0)
       })
-      const topScorers = Object.entries(scorerMap)
-        .map(([name, goals]) => ({ name, goals }))
-        .sort((a, b) => b.goals - a.goals)
-        .slice(0, 8)
-
-      // Match record
+      const topScorers = Object.entries(scorerMap).map(([name, goals]) => ({ name, goals })).sort((a, b) => b.goals - a.goals).slice(0, 8)
       const completed = fixtures.filter(f => f.status === 'completed')
       const wins = completed.filter(f => f.is_home ? f.home_score > f.away_score : f.away_score > f.home_score).length
       const draws = completed.filter(f => f.home_score === f.away_score).length
       const losses = completed.length - wins - draws
       const goalsFor = completed.reduce((a, f) => a + (f.is_home ? (f.home_score || 0) : (f.away_score || 0)), 0)
       const goalsAgainst = completed.reduce((a, f) => a + (f.is_home ? (f.away_score || 0) : (f.home_score || 0)), 0)
-
       setData({ topScorers, wins, draws, losses, played: completed.length, goalsFor, goalsAgainst })
       setLoading(false)
     }
     load()
   }, [clubId])
 
-  if (loading) return <div className="page-loading"><Spinner /><p>Loading analytics...</p></div>
+  if (loading) return <Spinner />
 
   const maxGoals = data.topScorers[0]?.goals || 1
 
   return (
     <div className="page">
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">Analytics</h1>
-          <p className="page-subtitle">Season performance overview</p>
-        </div>
+      <div className="page-hdr"><div className="page-title">Analytics</div><div className="page-sub">Season performance overview</div></div>
+      <div className="stat-grid" style={{ marginBottom: 20 }}>
+        <div className="stat-card"><div className="stat-label">Played</div><div className="stat-value">{data.played}</div></div>
+        <div className="stat-card"><div className="stat-label">Won</div><div className="stat-value" style={{ color: 'var(--green)' }}>{data.wins}</div></div>
+        <div className="stat-card"><div className="stat-label">Drawn</div><div className="stat-value" style={{ color: '#888' }}>{data.draws}</div></div>
+        <div className="stat-card"><div className="stat-label">Lost</div><div className="stat-value" style={{ color: 'var(--red)' }}>{data.losses}</div></div>
+        <div className="stat-card"><div className="stat-label">Win Rate</div><div className="stat-value">{data.played > 0 ? Math.round((data.wins / data.played) * 100) : 0}%</div></div>
       </div>
-
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: '1.5rem' }}>
-        <div className="stat-card"><div className="stat-number">{data.played}</div><div className="stat-label">Played</div></div>
-        <div className="stat-card"><div className="stat-number" style={{ color: '#22c55e' }}>{data.wins}</div><div className="stat-label">Won</div></div>
-        <div className="stat-card"><div className="stat-number" style={{ color: '#888' }}>{data.draws}</div><div className="stat-label">Drawn</div></div>
-        <div className="stat-card"><div className="stat-number" style={{ color: '#ef4444' }}>{data.losses}</div><div className="stat-label">Lost</div></div>
-        <div className="stat-card"><div className="stat-number">{data.played > 0 ? Math.round((data.wins / data.played) * 100) : 0}%</div><div className="stat-label">Win Rate</div></div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div className="card">
-          <div className="card-header"><h3 className="card-title">Top Scorers</h3></div>
-          {data.topScorers.length === 0 ? <p className="empty-state">No goal data yet</p> : (
+          <div className="card-hdr"><div className="card-title">Top Scorers</div></div>
+          {data.topScorers.length === 0 ? <div className="empty" style={{ padding: 24 }}><div className="empty-sub">No goal data yet</div></div> : (
             <div style={{ padding: '0.5rem 0' }}>
               {data.topScorers.map((s, i) => (
-                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem 0', borderBottom: i < data.topScorers.length - 1 ? '1px solid var(--border-color)' : 'none' }}>
-                  <div style={{ width: 24, textAlign: 'center', fontWeight: 700, color: i === 0 ? 'var(--gold)' : 'var(--text-muted)', fontSize: '0.8rem' }}>{i + 1}</div>
+                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 16px', borderBottom: i < data.topScorers.length - 1 ? '0.5px solid var(--border)' : 'none' }}>
+                  <div style={{ width: 20, textAlign: 'center', fontWeight: 700, color: i === 0 ? 'var(--btb-gold)' : 'var(--text-muted)', fontSize: '0.8rem' }}>{i + 1}</div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.875rem', fontWeight: 500, marginBottom: '0.25rem' }}>{s.name}</div>
-                    <div style={{ height: 6, background: 'var(--bg-secondary)', borderRadius: 3, overflow: 'hidden' }}>
-                      <div style={{ height: '100%', width: `${(s.goals / maxGoals) * 100}%`, background: i === 0 ? 'var(--gold)' : 'var(--royal-blue)', borderRadius: 3, transition: 'width 0.5s' }} />
+                    <div style={{ fontSize: '0.875rem', fontWeight: 500, marginBottom: 4 }}>{s.name}</div>
+                    <div style={{ height: 5, background: 'var(--bg-card2)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${(s.goals / maxGoals) * 100}%`, background: i === 0 ? 'var(--btb-gold)' : 'var(--btb-blue)', borderRadius: 3 }} />
                     </div>
                   </div>
-                  <div style={{ fontWeight: 700, fontSize: '0.9rem', minWidth: 24, textAlign: 'right' }}>{s.goals}</div>
+                  <div style={{ fontWeight: 700, minWidth: 20, textAlign: 'right' }}>{s.goals}</div>
                 </div>
               ))}
             </div>
           )}
         </div>
-
         <div className="card">
-          <div className="card-header"><h3 className="card-title">Goals</h3></div>
-          <div style={{ display: 'flex', gap: '1rem', padding: '0.5rem 0' }}>
-            <div className="stat-card" style={{ flex: 1 }}>
-              <div className="stat-number" style={{ color: '#22c55e' }}>{data.goalsFor}</div>
-              <div className="stat-label">Scored</div>
-            </div>
-            <div className="stat-card" style={{ flex: 1 }}>
-              <div className="stat-number" style={{ color: '#ef4444' }}>{data.goalsAgainst}</div>
-              <div className="stat-label">Conceded</div>
-            </div>
+          <div className="card-hdr"><div className="card-title">Goals</div></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, padding: 16 }}>
+            <div className="stat-card"><div className="stat-label">Scored</div><div className="stat-value" style={{ color: 'var(--green)' }}>{data.goalsFor}</div></div>
+            <div className="stat-card"><div className="stat-label">Conceded</div><div className="stat-value" style={{ color: 'var(--red)' }}>{data.goalsAgainst}</div></div>
           </div>
-          <div style={{ padding: '1rem 0' }}>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Goal Difference</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: data.goalsFor >= data.goalsAgainst ? '#22c55e' : '#ef4444' }}>
+          <div style={{ padding: '0 16px 16px' }}>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 4 }}>Goal Difference</div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: data.goalsFor >= data.goalsAgainst ? 'var(--green)' : 'var(--red)' }}>
               {data.goalsFor >= data.goalsAgainst ? '+' : ''}{data.goalsFor - data.goalsAgainst}
             </div>
           </div>
@@ -1459,7 +1041,126 @@ function AnalyticsPage({ clubId }) {
   )
 }
 
-// ── ROOT APP ──────────────────────────────────────────────────────────────────
+function FanApp({ club }) {
+  const [tab, setTab] = useState('home')
+  const [fixtures, setFixtures] = useState([])
+  const [players, setPlayers] = useState([])
+  const [liveMatch, setLiveMatch] = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    async function load() {
+      const [fixRes, playRes, liveRes] = await Promise.all([
+        supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false }).limit(20),
+        supabase.from('players').select('id,full_name,position,squad_number,photo_url').eq('club_id', club.id).eq('status', 'active').order('squad_number'),
+        supabase.from('fixtures').select('*, match_events(*)').eq('club_id', club.id).eq('status', 'live').maybeSingle(),
+      ])
+      setFixtures(fixRes.data || [])
+      setPlayers(playRes.data || [])
+      setLiveMatch(liveRes.data)
+      setLoading(false)
+    }
+    load()
+    const channel = supabase.channel('fan-live')
+      .on('postgres_changes', { event: '*', schema: 'sportspulse', table: 'fixtures', filter: `club_id=eq.${club.id}` }, () => load())
+      .subscribe()
+    return () => supabase.removeChannel(channel)
+  }, [club.id])
+
+  const upcoming = fixtures.filter(f => f.status === 'upcoming').sort((a, b) => new Date(a.match_date) - new Date(b.match_date))
+  const past = fixtures.filter(f => f.status === 'completed').sort((a, b) => new Date(b.match_date) - new Date(a.match_date))
+  const lastResult = past[0]
+  const tabs = [{ id: 'home', label: '🏠 Home' }, { id: 'fixtures', label: '📅 Fixtures' }, { id: 'squad', label: '👥 Squad' }, { id: 'tickets', label: '🎟 Tickets' }]
+
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', color: 'var(--text)' }}>
+      <div style={{ background: 'linear-gradient(135deg, #1a4bdb, #0f2d8a)', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, zIndex: 100 }}>
+        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--btb-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.85rem', color: '#000' }}>BTB</div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Beyond the Ball</div>
+          <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)' }}>Fan Zone · Nyeri, Kenya</div>
+        </div>
+        {liveMatch && <div style={{ marginLeft: 'auto', background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 700, padding: '2px 8px', borderRadius: 4 }}>● LIVE</div>}
+      </div>
+      <div style={{ padding: '1rem 1.25rem', paddingBottom: '5rem' }}>
+        {loading ? <Spinner /> : (
+          <>
+            {tab === 'home' && (
+              <div>
+                {liveMatch && (
+                  <div style={{ background: 'linear-gradient(135deg, #1a1a2e, #16213e)', border: '2px solid #1a4bdb', borderRadius: 16, padding: 20, marginBottom: 16, textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: '#ef4444', marginBottom: 8 }}>● LIVE MATCH</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>BTB <span style={{ color: 'var(--btb-gold)' }}>{liveMatch.home_score ?? 0} — {liveMatch.away_score ?? 0}</span> {liveMatch.opponent}</div>
+                  </div>
+                )}
+                {!liveMatch && upcoming[0] && (
+                  <div style={{ background: 'linear-gradient(135deg, #0d1b3e, #1a2744)', border: '1px solid rgba(26,75,219,0.4)', borderRadius: 16, padding: 20, marginBottom: 16, textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--btb-gold)', marginBottom: 8 }}>NEXT MATCH</div>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: 4 }}>BTB vs {upcoming[0].opponent}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{fmtDate(upcoming[0].match_date)} · {upcoming[0].is_home ? 'PCEA Primary Pitch' : 'Away'}</div>
+                  </div>
+                )}
+                {lastResult && (
+                  <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
+                    <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>LAST RESULT</div>
+                    <div style={{ fontWeight: 700 }}>BTB {lastResult.home_score} — {lastResult.away_score} {lastResult.opponent}</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(lastResult.match_date)}</div>
+                  </div>
+                )}
+                <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '12px 16px' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>ABOUT BTB</div>
+                  <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>Beyond the Ball Sports Academy is a youth football academy based in Nyeri, Kenya, dedicated to developing the next generation of Kenyan football talent. Founded in 2022.</p>
+                </div>
+              </div>
+            )}
+            {tab === 'fixtures' && (
+              <div>
+                {upcoming.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10 }}>UPCOMING</div>{upcoming.map(f => (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, marginBottom: 10 }}><div style={{ fontWeight: 700, marginBottom: 4 }}>BTB vs {f.opponent}</div><div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fmtDate(f.match_date)} · {f.is_home ? 'PCEA Primary Pitch, Nyeri' : f.venue || 'Away'}</div></div>))}</>}
+                {past.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', margin: '16px 0 10px' }}>RESULTS</div>{past.slice(0, 10).map(f => { const won = f.is_home ? f.home_score > f.away_score : f.away_score > f.home_score; const drew = f.home_score === f.away_score; return (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 14, marginBottom: 8, borderLeft: `3px solid ${drew ? '#888' : won ? '#22c55e' : '#ef4444'}` }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontWeight: 700 }}>BTB {f.home_score} — {f.away_score} {f.opponent}</span><span style={{ color: drew ? '#888' : won ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: '0.8rem' }}>{drew ? 'D' : won ? 'W' : 'L'}</span></div><div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>{fmtDate(f.match_date)}</div></div>) })}</>}
+                {fixtures.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 0' }}>No fixtures yet</p>}
+              </div>
+            )}
+            {tab === 'squad' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {players.map(p => (
+                  <div key={p.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, textAlign: 'center' }}>
+                    {p.photo_url ? <img src={p.photo_url} alt={p.full_name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', marginBottom: 8, border: '2px solid #1a4bdb' }} /> : <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(26,75,219,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px', fontSize: '1.25rem', fontWeight: 700, color: '#1a4bdb' }}>{p.squad_number || initials(p.full_name)}</div>}
+                    <div style={{ fontWeight: 600, fontSize: '0.875rem' }}>{p.full_name}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{p.position || 'Player'}</div>
+                  </div>
+                ))}
+                {players.length === 0 && <div style={{ gridColumn: '1/-1', textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 0' }}>Squad not published</div>}
+              </div>
+            )}
+            {tab === 'tickets' && (
+              <div style={{ textAlign: 'center', padding: '2rem 0' }}>
+                <div style={{ fontSize: '3rem', marginBottom: 16 }}>🎟</div>
+                <h2 style={{ fontWeight: 700, marginBottom: 8 }}>Match Day Tickets</h2>
+                <p style={{ color: 'var(--text-muted)', marginBottom: 24, fontSize: '0.875rem' }}>Pay via M-Pesa to secure your seat at the next BTB home match.</p>
+                {upcoming[0] ? (
+                  <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 24, marginBottom: 16 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>BTB vs {upcoming[0].opponent}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 16 }}>{fmtDate(upcoming[0].match_date)} · PCEA Primary Pitch</div>
+                    <a href={`https://wa.me/254${(club.whatsapp_number || '').replace(/^0/, '')}?text=I'd like to buy a ticket for the BTB vs ${upcoming[0].opponent} match`} target="_blank" rel="noreferrer" style={{ display: 'inline-block', background: '#25D366', color: '#fff', fontWeight: 700, padding: '12px 32px', borderRadius: 8, textDecoration: 'none' }}>💬 Buy via WhatsApp</a>
+                  </div>
+                ) : <p style={{ color: 'var(--text-muted)' }}>No upcoming home matches</p>}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'var(--bg-nav)', borderTop: '1px solid var(--border)', display: 'flex', zIndex: 200 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: '10px 4px', background: 'none', border: 'none', color: tab === t.id ? 'var(--btb-gold)' : 'var(--text-muted)', fontSize: '0.65rem', fontWeight: tab === t.id ? 700 : 400, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            <span style={{ fontSize: '1.1rem' }}>{t.label.split(' ')[0]}</span>
+            <span>{t.label.split(' ').slice(1).join(' ')}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [session, setSession] = useState(undefined)
   const [profile, setProfile] = useState(null)
@@ -1478,9 +1179,10 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (session === undefined) return
     if (!session) { setLoading(false); return }
     async function loadProfile() {
-      const { data: prof } = await supabase.from('profiles').select('*').eq('id', session.user.id).single()
+      const { data: prof } = await supabase.from('profiles').select('*').eq('user_id', session.user.id).single()
       if (prof) {
         setProfile(prof)
         const { data: cl } = await supabase.from('clubs').select('*').eq('id', prof.club_id).single()
@@ -1493,22 +1195,23 @@ function App() {
   }, [session])
 
   if (session === undefined || loading) return (
-    <div className="page-loading">
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem', fontWeight: 800, fontSize: '1.1rem', color: '#000' }}>BTB</div>
-        <Spinner />
-        <p style={{ color: 'var(--text-muted)', marginTop: '1rem' }}>Loading SportsPulse...</p>
-      </div>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
+      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--btb-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.1rem', color: '#000' }}>BTB</div>
+      <Spinner />
+      <p style={{ color: 'var(--text-muted)' }}>Loading SportsPulse...</p>
     </div>
   )
 
   if (!session) return <Login />
-  if (!profile) return <div className="page-loading"><Spinner /><p>Loading profile...</p></div>
+  if (!profile || !club) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
+      <Spinner />
+      <p style={{ color: 'var(--text-muted)' }}>Loading profile...</p>
+    </div>
+  )
 
-  // Fan role → dedicated fan PWA
-  if (profile.role === 'fan') return club ? <FanApp club={club} /> : <div className="page-loading"><Spinner /></div>
+  if (profile.role === 'fan') return <FanApp club={club} />
 
-  // Nav config per role
   const navItems = {
     manager: [
       { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
@@ -1529,109 +1232,77 @@ function App() {
       { id: 'messages', label: 'Messages', icon: '💬' },
     ],
     player: [
-      { id: 'player-dashboard', label: 'My Stats', icon: '⚡' },
       { id: 'fixtures', label: 'Fixtures', icon: '📅' },
       { id: 'training', label: 'Training', icon: '🏃' },
       { id: 'messages', label: 'Messages', icon: '💬' },
     ],
     parent: [
-      { id: 'parent-dashboard', label: 'My Children', icon: '👨‍👧' },
       { id: 'fixtures', label: 'Fixtures', icon: '📅' },
       { id: 'messages', label: 'Messages', icon: '💬' },
     ],
   }
 
   const items = navItems[profile.role] || navItems.player
-  const clubId = profile.club_id
 
   const renderPage = () => {
     switch (page) {
-      case 'dashboard': return <ManagerDashboard profile={profile} clubId={clubId} setPage={setPage} />
-      case 'squad': return <SquadPage profile={profile} clubId={clubId} />
-      case 'fixtures': return <FixturesPage profile={profile} clubId={clubId} setPage={setPage} />
-      case 'match-centre': return <MatchCentrePage clubId={clubId} />
-      case 'training': return <TrainingPage profile={profile} clubId={clubId} />
-      case 'fees': return <FeesPage profile={profile} clubId={clubId} />
-      case 'messages': return <MessagesPage profile={profile} clubId={clubId} />
-      case 'analytics': return <AnalyticsPage clubId={clubId} />
-      case 'player-dashboard': return <PlayerDashboard profile={profile} clubId={clubId} />
-      case 'parent-dashboard': return <ParentDashboard profile={profile} clubId={clubId} />
-      default: return <ManagerDashboard profile={profile} clubId={clubId} setPage={setPage} />
+      case 'dashboard': return <ManagerDashboard profile={profile} club={club} setPage={setPage} />
+      case 'squad': return <SquadPage userRole={profile.role} club={club} />
+      case 'fixtures': return <FixturesPage userRole={profile.role} club={club} />
+      case 'match-centre': return <MatchCentrePage club={club} />
+      case 'training': return <TrainingPage userRole={profile.role} club={club} />
+      case 'fees': return <FeesPage club={club} />
+      case 'messages': return <MessagesPage profile={profile} clubId={club.id} />
+      case 'analytics': return <AnalyticsPage clubId={club.id} />
+      default: return <ManagerDashboard profile={profile} club={club} setPage={setPage} />
     }
   }
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    sessionStorage.clear()
-  }
+  const handleSignOut = async () => { await supabase.auth.signOut(); sessionStorage.clear() }
 
   return (
     <div className="app-shell">
-      {/* SIDEBAR (desktop) */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">
             <div className="logo-badge">BTB</div>
-            <div className="logo-text">
+            <div>
               <div className="logo-name">Beyond the Ball</div>
               <div className="logo-sub">SportsPulse</div>
             </div>
           </div>
         </div>
-
         <nav className="sidebar-nav">
           {items.map(item => (
-            <button
-              key={item.id}
-              className={`nav-item ${page === item.id ? 'active' : ''}`}
-              onClick={() => { setPage(item.id); setSidebarOpen(false) }}
-            >
+            <button key={item.id} className={`nav-item ${page === item.id ? 'active' : ''}`} onClick={() => { setPage(item.id); setSidebarOpen(false) }}>
               <span className="nav-icon">{item.icon}</span>
               <span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
-
         <div className="sidebar-footer">
           <div className="sidebar-user">
             <div className="user-avatar">{initials(profile.full_name)}</div>
-            <div className="user-info">
+            <div>
               <div className="user-name">{profile.full_name}</div>
               <div className="user-role">{profile.role}</div>
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={handleSignOut} style={{ width: '100%', marginTop: '0.75rem', fontSize: '0.8rem' }}>Sign out</button>
+          <button className="btn btn-ghost" onClick={handleSignOut} style={{ width: '100%', marginTop: 12, fontSize: '0.8rem', justifyContent: 'center' }}>Sign out</button>
         </div>
       </aside>
-
-      {/* Sidebar overlay (mobile) */}
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
-
-      {/* MAIN CONTENT */}
       <div className="main-content">
-        {/* Mobile top bar */}
         <header className="mobile-header">
           <button className="hamburger" onClick={() => setSidebarOpen(true)}>☰</button>
-          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
-            {items.find(i => i.id === page)?.label || 'Dashboard'}
-          </div>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{items.find(i => i.id === page)?.label || 'Dashboard'}</div>
           <div style={{ width: 32 }} />
         </header>
-
-        {/* Page content */}
-        <div className="content-area">
-          {renderPage()}
-        </div>
+        <div className="content-area">{renderPage()}</div>
       </div>
-
-      {/* BOTTOM NAV (mobile) */}
       <nav className="bottom-nav">
         {items.slice(0, 5).map(item => (
-          <button
-            key={item.id}
-            className={`bottom-nav-item ${page === item.id ? 'active' : ''}`}
-            onClick={() => setPage(item.id)}
-          >
+          <button key={item.id} className={`bottom-nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}>
             <span className="bottom-nav-icon">{item.icon}</span>
             <span className="bottom-nav-label">{item.label}</span>
           </button>
@@ -1641,9 +1312,6 @@ function App() {
   )
 }
 
-// ── MOUNT ─────────────────────────────────────────────────────────────────────
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
+  <React.StrictMode><App /></React.StrictMode>
 )
