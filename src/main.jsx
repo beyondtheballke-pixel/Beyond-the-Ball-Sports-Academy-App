@@ -13,9 +13,12 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 const initials = (name = '') => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'
-const fmtTime = (d) => d ? new Date(d).toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }) : '—'
+const fmtTime = (d) => { if (!d) return '—'; const t = new Date(d); return (t.getHours() === 0 && t.getMinutes() === 0) ? 'Time TBA' : t.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }) }
 const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '—'
 const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d).getTime(); const h = Math.floor(diff / 3600000); if (h < 1) return 'Just now'; if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago` }
+const LOGO = '/bb-logo.jpg'
+const HOLIDAY_FORMATS = [['Under 9', '5v5'], ['Under 11', '7v7'], ['Under 13', '9v9'], ['Under 15', '11v11']]
+const venueOf = (f) => f.venue || (f.is_home ? 'Venue to be announced' : 'Away')
 const fmtKES = (n) => `KES ${(n || 0).toLocaleString()}`
 
 const STATUS_COLORS = {
@@ -128,7 +131,7 @@ function Login() {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <div className="login-crest">BTB</div>
+        <img src={LOGO} alt="Beyond the Ball" style={{ width: 96, height: 96, borderRadius: 16, margin: '0 auto 12px', display: 'block' }} />
         <div className="login-title">Beyond the Ball</div>
         <div className="login-sub">{isSignup ? 'Parent & guardian registration' : 'Sports Academy Platform'}</div>
         {error && <div className="login-error">{error}</div>}
@@ -927,14 +930,19 @@ function TrainingPage({ club, userRole }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
+  const [view, setView] = useState('upcoming')
 
   const load = useCallback(async () => {
-    const { data } = await supabase.from('training_sessions').select('*').eq('club_id', club.id).order('session_date', { ascending: false })
+    const { data } = await supabase.from('training_sessions').select('*').eq('club_id', club.id).order('session_date', { ascending: true })
     setSessions(data || [])
     setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
+
+  const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+  const shownSessions = sessions.filter(s => view === 'upcoming' ? new Date(s.session_date) >= startOfToday : new Date(s.session_date) < startOfToday)
+  if (view === 'past') shownSessions.reverse()
 
   if (loading) return <Spinner />
 
@@ -944,7 +952,8 @@ function TrainingPage({ club, userRole }) {
         <div><div className="page-title">Training</div><div className="page-sub">Session schedule and attendance</div></div>
         {(userRole === 'manager' || userRole === 'coach') && <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add session</button>}
       </div>
-      {sessions.length === 0
+      <div className="filter-pills">{[['upcoming', 'Upcoming'], ['past', 'Past']].map(([k, l]) => <button key={k} className={`pill ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>{l}</button>)}</div>
+      {shownSessions.length === 0
         ? <div className="empty"><div className="empty-title">No training sessions</div><div className="empty-sub">Schedule your first training session</div></div>
         : (
           <div className="card">
@@ -952,12 +961,12 @@ function TrainingPage({ club, userRole }) {
               <table>
                 <thead><tr><th>Date</th><th>Session</th><th>Type</th><th>Duration</th><th>Venue</th></tr></thead>
                 <tbody>
-                  {sessions.map(s => (
+                  {shownSessions.map(s => (
                     <tr key={s.id}>
                       <td>{fmtDateTime(s.session_date)}</td>
                       <td><strong>{s.title}</strong>{s.notes && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{s.notes}</div>}</td>
                       <td><span className="badge badge-blue">{s.session_type}</span></td>
-                      <td>{s.duration_mins} min</td>
+                      <td>{s.duration_mins ? `${s.duration_mins} min` : '—'}</td>
                       <td>{s.venue || '—'}</td>
                     </tr>
                   ))}
@@ -1412,7 +1421,7 @@ function FanApp({ club }) {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-primary)', color: 'var(--text)' }}>
       <div style={{ background: 'linear-gradient(135deg, #1a4bdb, #0f2d8a)', padding: '1rem 1.25rem', display: 'flex', alignItems: 'center', gap: 12, position: 'sticky', top: 0, zIndex: 100 }}>
-        <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--btb-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '0.85rem', color: '#000' }}>BTB</div>
+        <img src={LOGO} alt="BTB" style={{ width: 38, height: 38, borderRadius: 8 }} />
         <div>
           <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Beyond the Ball</div>
           <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.6)' }}>Fan Zone · Nyeri, Kenya</div>
@@ -1434,7 +1443,7 @@ function FanApp({ club }) {
                   <div style={{ background: 'linear-gradient(135deg, #0d1b3e, #1a2744)', border: '1px solid rgba(26,75,219,0.4)', borderRadius: 16, padding: 20, marginBottom: 16, textAlign: 'center' }}>
                     <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--btb-gold)', marginBottom: 8 }}>NEXT MATCH</div>
                     <div style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: 4 }}>BTB vs {upcoming[0].opponent}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{fmtDate(upcoming[0].match_date)} · {upcoming[0].is_home ? 'PCEA Primary Pitch' : 'Away'}</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{fmtDate(upcoming[0].match_date)} · {venueOf(upcoming[0])}</div>
                   </div>
                 )}
                 {lastResult && (
@@ -1452,8 +1461,12 @@ function FanApp({ club }) {
             )}
             {tab === 'fixtures' && (
               <div>
-                {upcoming.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10 }}>UPCOMING</div>{upcoming.map(f => (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, marginBottom: 10 }}><div style={{ fontWeight: 700, marginBottom: 4 }}>BTB vs {f.opponent}</div><div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fmtDate(f.match_date)} · {f.is_home ? 'PCEA Primary Pitch, Nyeri' : f.venue || 'Away'}</div></div>))}</>}
+                {upcoming.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10 }}>UPCOMING</div>{upcoming.map(f => (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, marginBottom: 10 }}><div style={{ fontWeight: 700, marginBottom: 4 }}>BTB vs {f.opponent}</div><div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fmtDate(f.match_date)} · {venueOf(f)}</div></div>))}</>}
                 {past.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', margin: '16px 0 10px' }}>RESULTS</div>{past.slice(0, 10).map(f => { const won = f.is_home ? f.home_score > f.away_score : f.away_score > f.home_score; const drew = f.home_score === f.away_score; return (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 14, marginBottom: 8, borderLeft: `3px solid ${drew ? '#888' : won ? '#22c55e' : '#ef4444'}` }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontWeight: 700 }}>BTB {f.home_score} — {f.away_score} {f.opponent}</span><span style={{ color: drew ? '#888' : won ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: '0.8rem' }}>{drew ? 'D' : won ? 'W' : 'L'}</span></div><div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>{fmtDate(f.match_date)}</div></div>) })}</>}
+                {fixtures.length > 0 && <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '12px 16px', margin: '16px 0 0' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>HOLIDAY MATCH FORMATS</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>{HOLIDAY_FORMATS.map(([a, f]) => <div key={a} style={{ textAlign: 'center' }}><div style={{ fontSize: '0.65rem', color: 'var(--btb-gold)' }}>{a.toUpperCase()}</div><div style={{ fontWeight: 800, fontSize: '1.1rem' }}>{f}</div></div>)}</div>
+                </div>}
                 {fixtures.length === 0 && <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '3rem 0' }}>No fixtures yet</p>}
               </div>
             )}
@@ -1477,7 +1490,7 @@ function FanApp({ club }) {
                 {upcoming[0] ? (
                   <div style={{ background: 'var(--bg-card)', borderRadius: 16, padding: 24, marginBottom: 16 }}>
                     <div style={{ fontWeight: 700, marginBottom: 4 }}>BTB vs {upcoming[0].opponent}</div>
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 16 }}>{fmtDate(upcoming[0].match_date)} · PCEA Primary Pitch</div>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 16 }}>{fmtDate(upcoming[0].match_date)} · {venueOf(upcoming[0])}</div>
                     <a href={`https://wa.me/254${(club.whatsapp_number || '').replace(/^0/, '')}?text=I'd like to buy a ticket for the BTB vs ${upcoming[0].opponent} match`} target="_blank" rel="noreferrer" style={{ display: 'inline-block', background: '#25D366', color: '#fff', fontWeight: 700, padding: '12px 32px', borderRadius: 8, textDecoration: 'none' }}>💬 Buy via WhatsApp</a>
                   </div>
                 ) : <p style={{ color: 'var(--text-muted)' }}>No upcoming home matches</p>}
@@ -1801,6 +1814,10 @@ function ParentDashboard({ club, profile, setPage }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
         <div className="card">
+          <div className="card-hdr"><div className="card-title">Holiday match formats</div></div>
+          <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, textAlign: 'center' }}>{HOLIDAY_FORMATS.map(([a, f]) => <div key={a}><div style={{ fontSize: 10, color: 'var(--btb-gold)' }}>{a.toUpperCase()}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{f}</div></div>)}</div>
+        </div>
+        <div className="card">
           <div className="card-hdr"><div className="card-title">Fees</div></div>
           <div className="card-body">
             {fees.length === 0 ? <div className="empty-sub">No fees yet</div> : (
@@ -1984,7 +2001,7 @@ function App() {
 
   if (session === undefined || loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
-      <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--btb-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1.1rem', color: '#000' }}>BTB</div>
+      <img src={LOGO} alt="Beyond the Ball" style={{ width: 72, height: 72, borderRadius: 14 }} />
       <Spinner />
       <p style={{ color: 'var(--text-muted)' }}>Loading SportsPulse...</p>
     </div>
@@ -2028,6 +2045,7 @@ function App() {
     parent: [
       { id: 'parent-dashboard', label: 'My Children', icon: '👨‍👧' },
       { id: 'fixtures', label: 'Fixtures', icon: '📅' },
+      { id: 'training', label: 'Training', icon: '🏃' },
       { id: 'messages', label: 'Messages', icon: '💬' },
     ],
   }
@@ -2057,7 +2075,7 @@ function App() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">
-            <div className="logo-badge">BTB</div>
+            <img src={LOGO} alt="BTB" style={{ width: 40, height: 40, borderRadius: 8 }} />
             <div>
               <div className="logo-name">Beyond the Ball</div>
               <div className="logo-sub">SportsPulse</div>
