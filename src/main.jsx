@@ -18,6 +18,7 @@ const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '—'
 const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d).getTime(); const h = Math.floor(diff / 3600000); if (h < 1) return 'Just now'; if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago` }
 const LOGO = '/bb-logo.jpg'
 const HOLIDAY_FORMATS = [['Under 9', '5v5'], ['Under 11', '7v7'], ['Under 13', '9v9'], ['Under 15', '11v11']]
+const oursTheirs = (f) => f.is_home ? [f.home_score ?? 0, f.away_score ?? 0] : [f.away_score ?? 0, f.home_score ?? 0]
 const venueOf = (f) => f.venue || (f.is_home ? 'Venue to be announced' : 'Away')
 const fmtKES = (n) => `KES ${(n || 0).toLocaleString()}`
 
@@ -785,139 +786,235 @@ function AddFixtureModal({ club, onClose, onSaved }) {
   )
 }
 
-function MatchCentrePage({ club }) {
+const MATCH_ACTIONS = [
+  { type: 'goal', label: 'Goal', icon: '⚽', hint: 'BTB scored' },
+  { type: 'opponent_goal', label: 'Opponent goal', icon: '🥅', hint: 'They scored' },
+  { type: 'penalty', label: 'Penalty scored', icon: '🎯', hint: 'BTB penalty goal' },
+  { type: 'penalty_missed', label: 'Penalty missed', icon: '❌', hint: 'Saved or missed' },
+  { type: 'yellow_card', label: 'Yellow card', icon: '🟨', hint: '' },
+  { type: 'red_card', label: 'Red card', icon: '🟥', hint: '' },
+  { type: 'substitution', label: 'Substitution', icon: '🔄', hint: '' },
+  { type: 'own_goal', label: 'Own goal', icon: '😬', hint: 'Counts for opponent' },
+  { type: 'injury', label: 'Injury', icon: '🩹', hint: '' },
+  { type: 'note', label: 'Note', icon: '📝', hint: 'Anything else' },
+]
+const EVENT_ICON = Object.fromEntries(MATCH_ACTIONS.map(a => [a.type, a.icon]))
+
+function MatchCentrePage({ club, userRole }) {
   const [fixtures, setFixtures] = useState([])
   const [selected, setSelected] = useState(null)
   const [events, setEvents] = useState([])
   const [players, setPlayers] = useState([])
   const [loading, setLoading] = useState(true)
-  const [logForm, setLogForm] = useState({ event_type: 'goal', minute: '', player_id: '' })
+  const [action, setAction] = useState(null)
+  const [form, setForm] = useState({ minute: '', player_id: '', assist_id: '', off_id: '', notes: '' })
   const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const isManager = userRole === 'manager'
+  const canLog = userRole === 'manager' || userRole === 'coach'
+
+  const loadEvents = useCallback(async (fid) => {
+    const { data } = await supabase.from('match_events')
+      .select('*, player:players!match_events_player_id_fkey(full_name,squad_number), assist:players!match_events_assist_player_id_fkey(full_name), off:players!match_events_player_off_id_fkey(full_name)')
+      .eq('fixture_id', fid).order('minute', { ascending: false }).order('created_at', { ascending: false })
+    setEvents(data || [])
+  }, [])
+
+  const refresh = useCallback(async (fid) => {
+    const [{ data: f }, { data: one }] = await Promise.all([
+      supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: true }),
+      fid ? supabase.from('fixtures').select('*').eq('id', fid).maybeSingle() : Promise.resolve({ data: null }),
+    ])
+    setFixtures(f || [])
+    if (one) setSelected(one)
+    if (fid) await loadEvents(fid)
+  }, [club.id, loadEvents])
 
   useEffect(() => {
-    const load = async () => {
+    const init = async () => {
       const [{ data: f }, { data: p }] = await Promise.all([
-        supabase.from('fixtures').select('*').eq('club_id', club.id).in('status', ['live', 'upcoming']).order('match_date', { ascending: true }).limit(5),
-        supabase.from('players').select('id,full_name,squad_number,position').eq('club_id', club.id).eq('is_active', true).order('squad_number', { ascending: true })
+        supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: true }),
+        supabase.from('players').select('id,full_name,squad_number,position').eq('club_id', club.id).eq('is_active', true).order('squad_number', { ascending: true }),
       ])
-      setFixtures(f || [])
-      setPlayers(p || [])
-      const live = (f || []).find(x => x.status === 'live') || (f || [])[0]
-      if (live) {
-        setSelected(live)
-        const { data: evts } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', live.id).order('minute', { ascending: false })
-        setEvents(evts || [])
-      }
+      setFixtures(f || []); setPlayers(p || [])
+      const list = f || []
+      const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0)
+      const pick = list.find(x => x.status === 'live') || list.find(x => x.status === 'upcoming' && new Date(x.match_date) >= startOfToday - 864e5) || list[list.length - 1]
+      if (pick) { setSelected(pick); await loadEvents(pick.id) }
       setLoading(false)
     }
-    load()
-  }, [club.id])
+    init()
+  }, [club.id, loadEvents])
 
   useEffect(() => {
-    if (!selected) return
-    const ch = supabase.channel('match-rt')
-      .on('postgres_changes', { event: 'INSERT', schema: 'sportspulse', table: 'match_events', filter: `fixture_id=eq.${selected.id}` }, async payload => {
-        const { data } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('id', payload.new.id).single()
-        setEvents(prev => [data, ...prev])
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'sportspulse', table: 'fixtures', filter: `id=eq.${selected.id}` }, payload => {
-        setSelected(payload.new)
-        setFixtures(prev => prev.map(f => f.id === payload.new.id ? payload.new : f))
-      })
+    if (!selected?.id) return
+    const fid = selected.id
+    const ch = supabase.channel('match-rt-' + fid)
+      .on('postgres_changes', { event: '*', schema: 'sportspulse', table: 'match_events', filter: `fixture_id=eq.${fid}` }, () => refresh(fid))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'sportspulse', table: 'fixtures', filter: `id=eq.${fid}` }, () => refresh(fid))
       .subscribe()
     return () => supabase.removeChannel(ch)
-  }, [selected?.id])
+  }, [selected?.id, refresh])
 
-  const startMatch = async () => { if (!selected) return; await supabase.from('fixtures').update({ status: 'live', minute: 1, home_score: 0, away_score: 0 }).eq('id', selected.id) }
-  const endMatch = async () => { if (!selected) return; await supabase.from('fixtures').update({ status: 'completed' }).eq('id', selected.id) }
-
-  const logEvent = async () => {
-    if (!selected || !logForm.minute) return
-    setSaving(true)
-    await supabase.from('match_events').insert({ fixture_id: selected.id, club_id: club.id, event_type: logForm.event_type, minute: parseInt(logForm.minute), player_id: logForm.player_id || null })
-    if (logForm.event_type === 'goal' && selected.is_home) await supabase.from('fixtures').update({ home_score: (selected.home_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
-    if (logForm.event_type === 'goal' && !selected.is_home) await supabase.from('fixtures').update({ away_score: (selected.away_score || 0) + 1, minute: parseInt(logForm.minute) }).eq('id', selected.id)
-    setLogForm(prev => ({ ...prev, minute: '', player_id: '' }))
-    setSaving(false)
+  const choose = async (f) => { setSelected(f); setAction(null); setMsg(null); await loadEvents(f.id) }
+  const setStatus = async (patch, ok) => {
+    const { error } = await supabase.from('fixtures').update(patch).eq('id', selected.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg(ok ? { kind: 'ok', text: ok } : null); await refresh(selected.id) }
+  }
+  const startMatch = () => { if (confirm(`Start the match against ${selected.opponent} now?`)) setStatus({ status: 'live', minute: 1 }, 'Match started') }
+  const endMatch = () => { if (confirm('End the match? You can still add or remove events afterwards.')) setStatus({ status: 'completed' }, 'Match ended') }
+  const reopenMatch = () => { if (confirm('Put this match back to live?')) setStatus({ status: 'live' }, 'Match is live again') }
+  const resetMatch = async () => {
+    if (!confirm(`Reset the match against ${selected.opponent}? This deletes its score and all events and puts it back to Upcoming.`)) return
+    const { error } = await supabase.rpc('reset_fixture', { p_fixture: selected.id })
+    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match reset to upcoming' }); setAction(null); await refresh(selected.id) }
   }
 
-  const eventIcon = { goal: '⚽', yellow_card: '🟨', red_card: '🟥', substitution: '🔄', penalty: '⚽', own_goal: '⚽' }
+  const openAction = (a) => { setAction(a); setMsg(null); setForm({ minute: selected.minute ? String(selected.minute) : '', player_id: '', assist_id: '', off_id: '', notes: '' }) }
+
+  const needsPlayer = (t) => ['goal', 'penalty', 'penalty_missed', 'yellow_card', 'red_card', 'substitution', 'injury'].includes(t)
+  const playerLabel = (t) => t === 'substitution' ? 'Player coming ON' : t === 'own_goal' ? 'Player (optional)' : 'Player'
+  const logEvent = async () => {
+    const t = action.type
+    const minute = parseInt(form.minute)
+    if (!minute || minute < 1 || minute > 130) { setMsg({ kind: 'error', text: 'Enter the minute (1 to 130)' }); return }
+    if (needsPlayer(t) && !form.player_id) { setMsg({ kind: 'error', text: 'Choose the player' }); return }
+    if (t === 'substitution' && !form.off_id) { setMsg({ kind: 'error', text: 'Choose the player coming OFF' }); return }
+    if (t === 'substitution' && form.off_id === form.player_id) { setMsg({ kind: 'error', text: 'On and off players must be different' }); return }
+    if (t === 'note' && !form.notes.trim()) { setMsg({ kind: 'error', text: 'Write the note' }); return }
+    if ((t === 'goal' || t === 'penalty') && form.assist_id && form.assist_id === form.player_id) { setMsg({ kind: 'error', text: 'The scorer cannot assist their own goal' }); return }
+    setSaving(true); setMsg(null)
+    const { error } = await supabase.from('match_events').insert({
+      fixture_id: selected.id, club_id: club.id, event_type: t, minute,
+      player_id: form.player_id || null,
+      assist_player_id: (t === 'goal' || t === 'penalty') && form.assist_id ? form.assist_id : null,
+      player_off_id: t === 'substitution' ? form.off_id : null,
+      notes: form.notes.trim() || null,
+    })
+    if (!error && selected.status === 'live') await supabase.from('fixtures').update({ minute }).eq('id', selected.id)
+    setSaving(false)
+    if (error) { setMsg({ kind: 'error', text: error.message }); return }
+    setMsg({ kind: 'ok', text: `${a_label(t)} logged at ${minute}'` })
+    setAction(null)
+    await refresh(selected.id)
+  }
+  const a_label = (t) => MATCH_ACTIONS.find(a => a.type === t)?.label || t
+  const removeEvent = async (evt) => {
+    if (!confirm(`Remove "${a_label(evt.event_type)}" at ${evt.minute}'?`)) return
+    const { error } = await supabase.from('match_events').delete().eq('id', evt.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else await refresh(selected.id)
+  }
+
+  const describe = (e) => {
+    const who = e.player?.full_name
+    switch (e.event_type) {
+      case 'goal': return <>Goal{who && <> — <strong>{who}</strong></>}{e.assist?.full_name && <> (assist {e.assist.full_name})</>}</>
+      case 'penalty': return <>Penalty scored{who && <> — <strong>{who}</strong></>}</>
+      case 'penalty_missed': return <>Penalty missed{who && <> — <strong>{who}</strong></>}</>
+      case 'opponent_goal': return <>Goal for {selected.opponent}{e.notes && <> ({e.notes})</>}</>
+      case 'own_goal': return <>Own goal{who && <> — <strong>{who}</strong></>}</>
+      case 'yellow_card': return <>Yellow card{who && <> — <strong>{who}</strong></>}</>
+      case 'red_card': return <>Red card{who && <> — <strong>{who}</strong></>}</>
+      case 'substitution': return <>Substitution — <strong>{who}</strong> on, <strong>{e.off?.full_name}</strong> off</>
+      case 'injury': return <>Injury{who && <> — <strong>{who}</strong></>}{e.notes && <> ({e.notes})</>}</>
+      default: return <>{e.notes || e.event_type}</>
+    }
+  }
 
   if (loading) return <Spinner />
+  const st = selected?.status
+  const ours = selected ? (selected.is_home ? selected.home_score : selected.away_score) : 0
+  const theirs = selected ? (selected.is_home ? selected.away_score : selected.home_score) : 0
+  const playerSelect = (key, label) => (
+    <div className="form-group"><label>{label}</label><select value={form[key]} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}><option value="">Select player</option>{players.map(p => <option key={p.id} value={p.id}>{p.squad_number ? `${p.squad_number} – ` : ''}{p.full_name}</option>)}</select></div>
+  )
 
   return (
     <div className="page">
       <div className="page-hdr">
-        <div><div className="page-title">Match centre</div><div className="page-sub">{selected ? `${club.short_name} vs ${selected.opponent}` : 'No active match'}</div></div>
-        <div className="page-actions">
-          {selected?.status === 'upcoming' && <button className="btn btn-primary" onClick={startMatch}>▶ Start match</button>}
-          {selected?.status === 'live' && <button className="btn btn-danger" onClick={endMatch}>■ End match</button>}
-        </div>
+        <div><div className="page-title">Match centre</div><div className="page-sub">{selected ? `${club.short_name || 'BTB'} vs ${selected.opponent}` : 'No matches'}</div></div>
+        {canLog && selected && (
+          <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {st === 'upcoming' && <button className="btn btn-primary" onClick={startMatch}>▶ Start match</button>}
+            {st === 'live' && <button className="btn btn-danger" onClick={endMatch}>■ End match</button>}
+            {st === 'completed' && <button className="btn btn-ghost" onClick={reopenMatch}>↩ Reopen</button>}
+            {isManager && st !== 'upcoming' && <button className="btn btn-ghost" onClick={resetMatch}>Reset match</button>}
+          </div>
+        )}
       </div>
-      {fixtures.length > 1 && (
-        <div className="filter-pills" style={{ marginBottom: 20 }}>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+      {fixtures.length > 0 && (
+        <div className="filter-pills" style={{ marginBottom: 20, overflowX: 'auto' }}>
           {fixtures.map(f => (
-            <button key={f.id} className={`pill ${selected?.id === f.id ? 'active' : ''}`} onClick={async () => { setSelected(f); const { data } = await supabase.from('match_events').select('*, player:players(full_name,squad_number)').eq('fixture_id', f.id).order('minute', { ascending: false }); setEvents(data || []) }}>
-              {f.opponent} · {fmtDate(f.match_date)}
+            <button key={f.id} className={`pill ${selected?.id === f.id ? 'active' : ''}`} onClick={() => choose(f)}>
+              {f.status === 'live' ? '● ' : ''}{f.opponent.length > 18 ? f.opponent.slice(0, 16) + '…' : f.opponent} · {fmtDate(f.match_date)}
             </button>
           ))}
         </div>
       )}
       {!selected
-        ? <div className="empty"><div className="empty-title">No upcoming or live matches</div><div className="empty-sub">Add a fixture first to use the match centre</div></div>
+        ? <div className="empty"><div className="empty-title">No matches yet</div><div className="empty-sub">Add a fixture first to use the match centre</div></div>
         : (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 16 }}>
-            <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 16 }}>
+            <div style={{ gridColumn: 'span 2', minWidth: 0 }}>
               <div className="match-hero">
                 <div className="match-hero-label">
-                  {selected.status === 'live' && <div className="live-pulse"></div>}
-                  {selected.competition} · {fmtDate(selected.match_date)} · {selected.venue || 'Venue TBC'}
+                  {st === 'live' && <div className="live-pulse"></div>}
+                  {selected.competition} · {fmtDate(selected.match_date)} · {venueOf(selected)}
                 </div>
                 <div className="match-hero-teams">
-                  <div className="match-hero-team"><div className="match-hero-team-name">{selected.is_home ? club.name : selected.opponent}</div><div className="match-hero-team-sub">Home</div></div>
-                  <div><div className="match-hero-score">{selected.home_score ?? 0} – {selected.away_score ?? 0}</div><div className="match-hero-minute">{selected.status === 'live' ? `${selected.minute}'` : selected.status.toUpperCase()}</div></div>
-                  <div className="match-hero-team"><div className="match-hero-team-name">{selected.is_home ? selected.opponent : club.name}</div><div className="match-hero-team-sub">Away</div></div>
+                  <div className="match-hero-team"><div className="match-hero-team-name">{club.name}</div><div className="match-hero-team-sub">{selected.is_home ? 'Home' : 'Away'}</div></div>
+                  <div><div className="match-hero-score">{ours ?? 0} – {theirs ?? 0}</div><div className="match-hero-minute">{st === 'live' ? `${selected.minute || 1}'` : st.toUpperCase()}</div></div>
+                  <div className="match-hero-team"><div className="match-hero-team-name">{selected.opponent}</div><div className="match-hero-team-sub">{selected.is_home ? 'Away' : 'Home'}</div></div>
                 </div>
-                {selected.status === 'live' && (
-                  <div className="match-hero-actions">
-                    {[{ type: 'goal', label: '⚽ Goal' }, { type: 'yellow_card', label: '🟨 Yellow' }, { type: 'red_card', label: '🟥 Red' }, { type: 'substitution', label: '🔄 Sub' }].map(a => (
-                      <button key={a.type} className="match-action-btn" onClick={() => setLogForm(prev => ({ ...prev, event_type: a.type }))}>{a.label}</button>
-                    ))}
-                  </div>
-                )}
               </div>
-              {selected.status === 'live' && (
-                <div className="card" style={{ marginBottom: 16, padding: '14px 16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 10, alignItems: 'flex-end' }}>
-                    <div className="form-group"><label>Event</label><select value={logForm.event_type} onChange={e => setLogForm(p => ({ ...p, event_type: e.target.value }))}><option value="goal">Goal</option><option value="yellow_card">Yellow card</option><option value="red_card">Red card</option><option value="substitution">Substitution</option><option value="penalty">Penalty</option></select></div>
-                    <div className="form-group"><label>Minute *</label><input type="number" min="1" max="120" placeholder="e.g. 23" value={logForm.minute} onChange={e => setLogForm(p => ({ ...p, minute: e.target.value }))} /></div>
-                    <div className="form-group"><label>Player</label><select value={logForm.player_id} onChange={e => setLogForm(p => ({ ...p, player_id: e.target.value }))}><option value="">Select player</option>{players.map(p => <option key={p.id} value={p.id}>{p.squad_number} – {p.full_name}</option>)}</select></div>
-                    <button className="btn btn-primary" onClick={logEvent} disabled={saving || !logForm.minute}>+ Log</button>
+
+              {canLog && st === 'upcoming' && <Note kind="info" style={{ marginBottom: 16 }}>Press <strong>Start match</strong> when the whistle blows. Events can be logged once the match is live.</Note>}
+
+              {canLog && st !== 'upcoming' && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-hdr"><div className="card-title">Log an action</div></div>
+                  <div className="card-body">
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 8 }}>
+                      {MATCH_ACTIONS.map(a => (
+                        <button key={a.type} onClick={() => openAction(a)} className="btn btn-ghost" style={{ flexDirection: 'column', height: 'auto', padding: '10px 6px', gap: 2, borderColor: action?.type === a.type ? 'var(--btb-gold)' : undefined }}>
+                          <span style={{ fontSize: 20 }}>{a.icon}</span><span style={{ fontSize: 12 }}>{a.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {action && (
+                      <div style={{ marginTop: 14, borderTop: '0.5px solid var(--border)', paddingTop: 14 }}>
+                        <div style={{ fontWeight: 700, marginBottom: 10 }}>{action.icon} {action.label}{action.hint ? ` · ${action.hint}` : ''}</div>
+                        <div className="form-grid">
+                          <div className="form-group"><label>Minute *</label><input type="number" min="1" max="130" value={form.minute} onChange={e => setForm(p => ({ ...p, minute: e.target.value }))} placeholder="e.g. 23" /></div>
+                          {(needsPlayer(action.type) || action.type === 'own_goal') && playerSelect('player_id', playerLabel(action.type))}
+                          {action.type === 'substitution' && playerSelect('off_id', 'Player coming OFF')}
+                          {(action.type === 'goal' || action.type === 'penalty') && playerSelect('assist_id', 'Assist (optional)')}
+                          {['opponent_goal', 'injury', 'note', 'red_card', 'yellow_card'].includes(action.type) && (
+                            <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>{action.type === 'note' ? 'Note *' : action.type === 'opponent_goal' ? 'Scorer (optional)' : 'Details (optional)'}</label><input value={form.notes} onChange={e => setForm(p => ({ ...p, notes: e.target.value }))} /></div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                          <button className="btn btn-primary" onClick={logEvent} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+                          <button className="btn btn-ghost" onClick={() => setAction(null)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
+
               <div className="card">
                 <div className="card-hdr"><div className="card-title">Match events</div></div>
                 {events.length === 0
                   ? <div className="empty" style={{ padding: 24 }}><div className="empty-sub">No events logged yet</div></div>
                   : events.map(evt => (
-                    <div key={evt.id} className="activity-item" style={{ padding: '10px 16px' }}>
-                      <span style={{ fontSize: 14 }}>{eventIcon[evt.event_type] || '📋'}</span>
-                      <div className="activity-text"><strong>{evt.minute}'</strong> {evt.event_type.replace('_', ' ')}{evt.player && <> — <strong>{evt.player.full_name}</strong></>}</div>
+                    <div key={evt.id} className="activity-item" style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ fontSize: 14 }}>{EVENT_ICON[evt.event_type] || '📋'}</span>
+                      <div className="activity-text" style={{ flex: 1 }}><strong>{evt.minute}'</strong> {describe(evt)}</div>
+                      {canLog && <button className="btn btn-ghost btn-sm" onClick={() => removeEvent(evt)} title="Remove this event">✕</button>}
                     </div>
                   ))}
-              </div>
-            </div>
-            <div className="card" style={{ height: 'fit-content' }}>
-              <div className="card-hdr"><div className="card-title">Squad</div></div>
-              <div style={{ maxHeight: 500, overflowY: 'auto' }}>
-                {players.map(p => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', borderBottom: '0.5px solid var(--border)' }}>
-                    <span style={{ width: 20, fontSize: 11, color: 'var(--text-dim)', fontFamily: 'monospace' }}>{p.squad_number}</span>
-                    <span style={{ flex: 1, fontSize: 12, color: 'var(--text)' }}>{p.full_name}</span>
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{p.position?.slice(0, 3)}</span>
-                  </div>
-                ))}
               </div>
             </div>
           </div>
@@ -1436,7 +1533,7 @@ function FanApp({ club }) {
                 {liveMatch && (
                   <div style={{ background: 'linear-gradient(135deg, #1a1a2e, #16213e)', border: '2px solid #1a4bdb', borderRadius: 16, padding: 20, marginBottom: 16, textAlign: 'center' }}>
                     <div style={{ fontSize: '0.65rem', fontWeight: 700, letterSpacing: '0.1em', color: '#ef4444', marginBottom: 8 }}>● LIVE MATCH</div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>BTB <span style={{ color: 'var(--btb-gold)' }}>{liveMatch.home_score ?? 0} — {liveMatch.away_score ?? 0}</span> {liveMatch.opponent}</div>
+                    <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>BTB <span style={{ color: 'var(--btb-gold)' }}>{oursTheirs(liveMatch)[0]} — {oursTheirs(liveMatch)[1]}</span> {liveMatch.opponent}</div>
                   </div>
                 )}
                 {!liveMatch && upcoming[0] && (
@@ -1449,7 +1546,7 @@ function FanApp({ club }) {
                 {lastResult && (
                   <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '12px 16px', marginBottom: 16 }}>
                     <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 6 }}>LAST RESULT</div>
-                    <div style={{ fontWeight: 700 }}>BTB {lastResult.home_score} — {lastResult.away_score} {lastResult.opponent}</div>
+                    <div style={{ fontWeight: 700 }}>BTB {oursTheirs(lastResult)[0]} — {oursTheirs(lastResult)[1]} {lastResult.opponent}</div>
                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(lastResult.match_date)}</div>
                   </div>
                 )}
@@ -1462,7 +1559,7 @@ function FanApp({ club }) {
             {tab === 'fixtures' && (
               <div>
                 {upcoming.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 10 }}>UPCOMING</div>{upcoming.map(f => (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 16, marginBottom: 10 }}><div style={{ fontWeight: 700, marginBottom: 4 }}>BTB vs {f.opponent}</div><div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{fmtDate(f.match_date)} · {venueOf(f)}</div></div>))}</>}
-                {past.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', margin: '16px 0 10px' }}>RESULTS</div>{past.slice(0, 10).map(f => { const won = f.is_home ? f.home_score > f.away_score : f.away_score > f.home_score; const drew = f.home_score === f.away_score; return (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 14, marginBottom: 8, borderLeft: `3px solid ${drew ? '#888' : won ? '#22c55e' : '#ef4444'}` }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontWeight: 700 }}>BTB {f.home_score} — {f.away_score} {f.opponent}</span><span style={{ color: drew ? '#888' : won ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: '0.8rem' }}>{drew ? 'D' : won ? 'W' : 'L'}</span></div><div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>{fmtDate(f.match_date)}</div></div>) })}</>}
+                {past.length > 0 && <><div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', margin: '16px 0 10px' }}>RESULTS</div>{past.slice(0, 10).map(f => { const [o, t] = oursTheirs(f); const won = o > t; const drew = o === t; return (<div key={f.id} style={{ background: 'var(--bg-card)', borderRadius: 12, padding: 14, marginBottom: 8, borderLeft: `3px solid ${drew ? '#888' : won ? '#22c55e' : '#ef4444'}` }}><div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ fontWeight: 700 }}>BTB {o} — {t} {f.opponent}</span><span style={{ color: drew ? '#888' : won ? '#22c55e' : '#ef4444', fontWeight: 700, fontSize: '0.8rem' }}>{drew ? 'D' : won ? 'W' : 'L'}</span></div><div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>{fmtDate(f.match_date)}</div></div>) })}</>}
                 {fixtures.length > 0 && <div style={{ background: 'var(--bg-card)', borderRadius: 12, padding: '12px 16px', margin: '16px 0 0' }}>
                   <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: 8 }}>HOLIDAY MATCH FORMATS</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>{HOLIDAY_FORMATS.map(([a, f]) => <div key={a} style={{ textAlign: 'center' }}><div style={{ fontSize: '0.65rem', color: 'var(--btb-gold)' }}>{a.toUpperCase()}</div><div style={{ fontWeight: 800, fontSize: '1.1rem' }}>{f}</div></div>)}</div>
@@ -2059,7 +2156,7 @@ function App() {
       case 'approvals': return profile.role !== 'manager' ? null : <ApprovalsPage profile={profile} club={club} />
       case 'squad': return <SquadPage userRole={profile.role} club={club} />
       case 'fixtures': return <FixturesPage userRole={profile.role} club={club} />
-      case 'match-centre': return <MatchCentrePage club={club} />
+      case 'match-centre': return <MatchCentrePage club={club} userRole={profile.role} />
       case 'training': return <TrainingPage userRole={profile.role} club={club} />
       case 'fees': return profile.role === 'manager' ? <FeesPage club={club} /> : null
       case 'messages': return <MessagesPage profile={profile} clubId={club.id} />
