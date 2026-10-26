@@ -3,8 +3,8 @@ import ReactDOM from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import './index.css'
 
-const SUPABASE_URL = 'https://cdfvpjituqlingdnbtfh.supabase.co'
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkZnZwaml0dXFsaW5nZG5idGZoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5ODMyMzAsImV4cCI6MjA5NDU1OTIzMH0.Rx0WRs-0q-_R0UmLyIRrvDOLkruMxYSTUDQDEh2SuAk'
+const SUPABASE_URL = 'https://uresunvtcxlqlqmdgkqk.supabase.co'
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVyZXN1bnZ0Y3hscWxxbWRna3FrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5MzM2NTQsImV4cCI6MjA5OTUwOTY1NH0.tRazSefG8I3l49lJYwqTu_7cDgx07D16UoMHZsfgv0A'
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
   db: { schema: 'sportspulse' },
