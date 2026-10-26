@@ -341,7 +341,7 @@ function SquadPage({ club, userRole }) {
             ))}
           </div>
         )}
-      {showAdd && <PlayerRegistrationModal mode="staff" club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      {showAdd && <PlayerRegistrationModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole={userRole} onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
     </div>
   )
@@ -349,14 +349,14 @@ function SquadPage({ club, userRole }) {
 
 // mode = 'staff' (manager/coach registers a player straight into the squad)
 //      = 'parent' (a parent registers their child; it waits for approval)
-function PlayerRegistrationModal({ club, profile, mode = 'staff', onClose, onSaved }) {
-  const isParent = mode === 'parent'
+function PlayerRegistrationModal({ club, onClose, onSaved }) {
+  const isParent = false
   const [tab, setTab] = useState('personal')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [warning, setWarning] = useState('')
   const [relationship, setRelationship] = useState('mother')
-  const [form, setForm] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', id_number: '', squad_number: '', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', school_name: '', school_grade: '', home_address: '', contract_start: '', contract_end: '' })
+  const [form, setForm] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', squad_number: '', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', school_name: '', school_grade: '', home_address: '', contract_start: '', contract_end: '' })
   const [photo, setPhoto] = useState(null)
   const [photoPreview, setPhotoPreview] = useState('')
   const [files, setFiles] = useState({})
@@ -391,7 +391,7 @@ function PlayerRegistrationModal({ club, profile, mode = 'staff', onClose, onSav
       playerId = crypto.randomUUID()
       const { error: err } = await supabase.from('players').insert({
         id: playerId, club_id: club.id, full_name: form.full_name.trim(), date_of_birth: form.date_of_birth || null,
-        nationality: form.nationality || null, id_number: form.id_number || null,
+        nationality: form.nationality || null,
         squad_number: form.squad_number ? parseInt(form.squad_number) : null, position: form.position || null,
         position_detail: form.position_detail || null, dominant_foot: form.dominant_foot || null,
         height_cm: form.height_cm ? parseInt(form.height_cm) : null, weight_kg: form.weight_kg ? parseInt(form.weight_kg) : null,
@@ -456,7 +456,6 @@ function PlayerRegistrationModal({ club, profile, mode = 'staff', onClose, onSav
               <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>{isParent ? "Child's full name *" : 'Full name *'}</label><input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="e.g. John Kamau Mwangi" maxLength={100} /></div>
               <div className="form-group"><label>Date of birth{isParent ? ' *' : ''}</label><input type="date" max={new Date().toISOString().slice(0, 10)} value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} /></div>
               <div className="form-group"><label>Nationality</label><input value={form.nationality} onChange={e => set('nationality', e.target.value)} placeholder="e.g. Kenyan" /></div>
-              <div className="form-group"><label>Birth cert / ID number</label><input value={form.id_number} onChange={e => set('id_number', e.target.value)} placeholder="Birth certificate or ID number" /></div>
               {isParent && (
                 <div className="form-group"><label>Your relationship</label>
                   <select value={relationship} onChange={e => setRelationship(e.target.value)}>
@@ -599,24 +598,30 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
           </div>
         )}
         <div className="tabs no-scroll">
-          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }].map(t => (
+          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : [])].map(t => (
             <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.l}</button>
           ))}
         </div>
         {tab === 'profile' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'ID number', v: player.id_number }, { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
+            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
               <div key={l}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
         )}
         {tab === 'academy' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {[{ l: 'School', v: player.school_name }, { l: 'Grade / class', v: player.school_grade }, { l: 'Home address', v: player.home_address, full: true }].map(({ l, v, full }) => (
+            {[{ l: 'School', v: player.school_name }, { l: 'Grade / class', v: player.school_grade }, { l: 'Home address', v: player.home_address, full: true }, ...(isStaff || isParent ? [{ l: 'Medical conditions', v: player.medical_conditions, full: true }, { l: 'Allergies', v: player.allergies, full: true }] : [])].map(({ l, v, full }) => (
               <div key={l} style={{ gridColumn: full ? '1 / -1' : 'auto' }}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
         )}
+        {tab === 'family' && player.links?.[0]?.parent && (() => { const pr = player.links[0].parent; return (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            {[{ l: `Parent / guardian (${player.links[0].relationship})`, v: pr.full_name, full: true }, { l: 'Phone', v: [pr.phone, pr.alt_phone].filter(Boolean).join(' / ') }, { l: 'Email', v: pr.email }, { l: 'Lives at', v: pr.residence, full: true }, { l: 'Occupation', v: pr.occupation }, { l: 'Alternative contact', v: pr.alt_contact_name ? `${pr.alt_contact_name} (${pr.alt_contact_relationship})` : null }, { l: 'Alternative contact phone', v: pr.alt_contact_phone }].map(({ l, v, full }) => (
+              <div key={l} style={{ gridColumn: full ? '1 / -1' : 'auto' }}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
+            ))}
+          </div>) })()}
         {tab === 'documents' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {msg && <Note kind={msg.kind}>{msg.text}</Note>}
@@ -1358,6 +1363,242 @@ function FanApp({ club }) {
   )
 }
 
+const WIZARD_STEPS = ['Parent / guardian', 'Alternative contact', 'Your child', 'Home & school', 'Health & consent', 'Documents', 'Review']
+const REQUIRED_DOCS = ['birth_certificate', 'parent_id']
+const phoneOk = (v = '') => v.replace(/[^0-9]/g, '').length >= 9
+
+// Step-by-step registration for parents. Each step must be completed before the next opens.
+function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
+  const [step, setStep] = useState(0)
+  const [maxStep, setMaxStep] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [warning, setWarning] = useState('')
+  const [relationship, setRelationship] = useState('mother')
+  const [g, setG] = useState({
+    full_name: profile.full_name || '', phone: profile.phone || '', alt_phone: profile.alt_phone || '',
+    residence: profile.residence || '', occupation: profile.occupation || '',
+    alt_contact_name: profile.alt_contact_name || '', alt_contact_relationship: profile.alt_contact_relationship || '', alt_contact_phone: profile.alt_contact_phone || '',
+  })
+  const [c, setC] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', home_address: '', school_name: '', school_grade: '', medical_conditions: '', allergies: '' })
+  const [consent, setConsent] = useState(false)
+  const [photo, setPhoto] = useState(null)
+  const [photoPreview, setPhotoPreview] = useState('')
+  const [files, setFiles] = useState({})
+  const setGv = (k, v) => setG(p => ({ ...p, [k]: v }))
+  const setCv = (k, v) => setC(p => ({ ...p, [k]: v }))
+  const docTypes = DOC_TYPES.filter(d => !d.staffOnly)
+  const today = new Date().toISOString().slice(0, 10)
+
+  useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
+
+  // returns an error message if the step is incomplete
+  const validate = (i) => {
+    if (i === 0) {
+      if (g.full_name.trim().length < 2) return 'Enter your full name'
+      if (!phoneOk(g.phone)) return 'Enter a valid phone number'
+      if (g.alt_phone && !phoneOk(g.alt_phone)) return 'The second phone number is not valid'
+      if (g.residence.trim().length < 3) return 'Enter where you live (estate / village and town)'
+    }
+    if (i === 1) {
+      if (g.alt_contact_name.trim().length < 2) return 'Enter the alternative contact\'s name'
+      if (g.alt_contact_relationship.trim().length < 2) return 'Enter how they are related to the child'
+      if (!phoneOk(g.alt_contact_phone)) return 'Enter a valid phone number for the alternative contact'
+      if (g.alt_contact_phone.replace(/\D/g, '') === g.phone.replace(/\D/g, '')) return 'The alternative contact needs a different phone number from yours'
+    }
+    if (i === 2) {
+      if (c.full_name.trim().length < 2) return 'Enter the child\'s full name'
+      if (!c.date_of_birth) return 'Enter the child\'s date of birth'
+      if (c.date_of_birth > today) return 'Date of birth cannot be in the future'
+      if (!c.position) return 'Choose the child\'s preferred position'
+    }
+    if (i === 3) {
+      if (c.home_address.trim().length < 3) return 'Enter where the child lives'
+      if (c.school_name.trim().length < 2) return 'Enter the child\'s school'
+    }
+    if (i === 4) {
+      if (!consent) return 'You must tick the consent box to continue'
+    }
+    if (i === 5) {
+      const missing = REQUIRED_DOCS.filter(k => !files[k]).map(k => DOC_LABELS[k])
+      if (missing.length) return 'Please upload: ' + missing.join(' and ')
+    }
+    return ''
+  }
+
+  const next = () => {
+    const e = validate(step); if (e) { setError(e); return }
+    setError(''); const n = step + 1; setStep(n); setMaxStep(m => Math.max(m, n))
+  }
+  const back = () => { setError(''); setStep(s => Math.max(0, s - 1)) }
+  const goTo = (i) => { if (i <= maxStep && i !== step) { setError(''); setStep(i) } }
+
+  const pickPhoto = (e) => {
+    const f = e.target.files[0]; if (!f) return
+    const bad = checkFile(f, 'photo'); if (bad) { setError(bad); return }
+    setError(''); setPhoto(f); setPhotoPreview(URL.createObjectURL(f))
+  }
+  const pickDoc = (e, key) => {
+    const f = e.target.files[0]; if (!f) return
+    const bad = checkFile(f, 'doc'); if (bad) { setError(`${DOC_LABELS[key]}: ${bad}`); return }
+    setError(''); setFiles(prev => ({ ...prev, [key]: f }))
+  }
+
+  const submit = async () => {
+    for (let i = 0; i < 6; i++) { const e = validate(i); if (e) { setStep(i); setError(e); return } }
+    setSaving(true); setError('')
+    const { data: playerId, error: err } = await supabase.rpc('register_child', { p: { ...c, consent: 'true' }, g, p_relationship: relationship })
+    if (err) { setError(err.message); setSaving(false); return }
+    const problems = []
+    if (photo) {
+      const { url, error: pe } = await uploadPlayerPhoto({ playerId, file: photo })
+      if (pe) problems.push('photo: ' + pe); else await supabase.from('players').update({ photo_url: url }).eq('id', playerId)
+    }
+    for (const d of docTypes) {
+      if (!files[d.key]) continue
+      const msg = await uploadPlayerDoc({ clubId: club.id, playerId, docType: d.key, file: files[d.key] })
+      if (msg) problems.push(`${d.label}: ${msg}`)
+    }
+    setSaving(false)
+    if (problems.length) { setWarning(`${c.full_name} was registered, but some files did not upload (${problems.join('; ')}). Open your child's profile, go to Documents and add them again.`); return }
+    onSaved()
+  }
+
+  if (warning) return (
+    <Modal title="Registered, with a warning" onClose={onSaved}>
+      <div className="modal-body"><Note kind="warn">{warning}</Note></div>
+      <div className="modal-footer"><button className="btn btn-primary" onClick={onSaved}>OK</button></div>
+    </Modal>
+  )
+
+  const Field = ({ label, children, full }) => <div className="form-group" style={full ? { gridColumn: '1 / -1' } : undefined}><label>{label}</label>{children}</div>
+  const Row = ({ l, v }) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13 }}><span style={{ color: 'var(--text-muted)' }}>{l}</span><span style={{ textAlign: 'right' }}>{v || '—'}</span></div>
+
+  return (
+    <Modal title="Register your child" onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+          {WIZARD_STEPS.map((s, i) => <div key={s} onClick={() => goTo(i)} style={{ flex: 1, height: 5, borderRadius: 3, cursor: i <= maxStep ? 'pointer' : 'default', background: i < step ? 'var(--green)' : i === step ? 'var(--btb-gold)' : 'var(--border)' }} />)}
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>Step {step + 1} of {WIZARD_STEPS.length} · <strong style={{ color: 'var(--text)' }}>{WIZARD_STEPS[step]}</strong></div>
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+
+        {step === 0 && (
+          <div className="form-grid">
+            <Field label="Your full name *" full><input value={g.full_name} onChange={e => setGv('full_name', e.target.value)} maxLength={100} /></Field>
+            <Field label="Your relationship to the child *"><select value={relationship} onChange={e => setRelationship(e.target.value)}>{['mother', 'father', 'guardian', 'other'].map(r => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}</select></Field>
+            <Field label="Occupation"><input value={g.occupation} onChange={e => setGv('occupation', e.target.value)} /></Field>
+            <Field label="Phone / WhatsApp *"><input type="tel" value={g.phone} onChange={e => setGv('phone', e.target.value)} placeholder="07XX XXX XXX" /></Field>
+            <Field label="Second phone number"><input type="tel" value={g.alt_phone} onChange={e => setGv('alt_phone', e.target.value)} placeholder="Optional" /></Field>
+            <Field label="Email"><input value={profile.email || ''} disabled /></Field>
+            <Field label="Where you live *" full><input value={g.residence} onChange={e => setGv('residence', e.target.value)} placeholder="Estate / village, town" /></Field>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Someone we can reach if we cannot reach you, for example in an emergency during training or a match.</div>
+            <div className="form-grid">
+              <Field label="Full name *" full><input value={g.alt_contact_name} onChange={e => setGv('alt_contact_name', e.target.value)} maxLength={100} /></Field>
+              <Field label="Relationship to the child *"><input value={g.alt_contact_relationship} onChange={e => setGv('alt_contact_relationship', e.target.value)} placeholder="e.g. Aunt, Grandmother, Neighbour" /></Field>
+              <Field label="Phone number *"><input type="tel" value={g.alt_contact_phone} onChange={e => setGv('alt_contact_phone', e.target.value)} placeholder="07XX XXX XXX" /></Field>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 80, height: 80, borderRadius: '50%', background: 'var(--bg-card2)', border: '0.5px solid var(--border)', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {photoPreview ? <img src={photoPreview} alt="Child" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <span style={{ fontSize: 28, color: 'var(--text-dim)' }}>👤</span>}
+              </div>
+              <div>
+                <label className="btn btn-ghost btn-sm" style={{ cursor: 'pointer' }}>{photo ? 'Change photo' : 'Add photo (optional)'}<input type="file" accept="image/jpeg,image/png,image/webp" style={{ display: 'none' }} onChange={pickPhoto} /></label>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>JPG, PNG or WebP, up to 3 MB</div>
+              </div>
+            </div>
+            <div className="form-grid">
+              <Field label="Child's full name *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></Field>
+              <Field label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} /></Field>
+              <Field label="Nationality"><input value={c.nationality} onChange={e => setCv('nationality', e.target.value)} /></Field>
+              <Field label="Preferred position *"><select value={c.position} onChange={e => setCv('position', e.target.value)}><option value="">Select</option>{['Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => <option key={p}>{p}</option>)}</select></Field>
+              <Field label="Position detail"><input value={c.position_detail} onChange={e => setCv('position_detail', e.target.value)} placeholder="e.g. Right Wing" /></Field>
+              <Field label="Dominant foot"><select value={c.dominant_foot} onChange={e => setCv('dominant_foot', e.target.value)}>{['Right', 'Left', 'Both'].map(f => <option key={f}>{f}</option>)}</select></Field>
+              <Field label="Height (cm)"><input type="number" value={c.height_cm} onChange={e => setCv('height_cm', e.target.value)} /></Field>
+              <Field label="Weight (kg)"><input type="number" value={c.weight_kg} onChange={e => setCv('weight_kg', e.target.value)} /></Field>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="form-grid">
+            <Field label="Where the child lives *" full>
+              <textarea value={c.home_address} onChange={e => setCv('home_address', e.target.value)} placeholder="Estate / village, town, landmark" />
+              {g.residence && c.home_address !== g.residence && <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCv('home_address', g.residence)}>Same as my address</button>}
+            </Field>
+            <Field label="School *"><input value={c.school_name} onChange={e => setCv('school_name', e.target.value)} placeholder="e.g. Nyeri Primary School" /></Field>
+            <Field label="Grade / class"><input value={c.school_grade} onChange={e => setCv('school_grade', e.target.value)} placeholder="e.g. Grade 7" /></Field>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div>
+            <div className="form-grid">
+              <Field label="Medical conditions" full><textarea value={c.medical_conditions} onChange={e => setCv('medical_conditions', e.target.value)} placeholder="Asthma, injuries, anything the coaches should know. Write 'None' if there is nothing." /></Field>
+              <Field label="Allergies" full><textarea value={c.allergies} onChange={e => setCv('allergies', e.target.value)} placeholder="Food, medicine or other allergies. Write 'None' if there are none." /></Field>
+            </div>
+            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 16, background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 10, padding: 12, cursor: 'pointer' }}>
+              <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} style={{ width: 'auto', marginTop: 3 }} />
+              <span style={{ fontSize: 13, lineHeight: 1.5 }}>I confirm the details I have given are correct and that I am the parent or legal guardian of this child. I allow my child to take part in {club.name} training and matches, and I allow the academy to arrange emergency medical treatment and to contact me or my alternative contact if needed. *</span>
+            </label>
+          </div>
+        )}
+
+        {step === 5 && (
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>PDF, JPG or PNG, up to 5 MB each. Stored privately: only the academy and you can open them. Birth certificate and parent ID are required.</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {docTypes.map(({ key, label }) => {
+                const f = files[key]; const req = REQUIRED_DOCS.includes(key)
+                return (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '10px 14px' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{label}{req ? ' *' : ' (optional)'}</div>
+                      {f && <div style={{ fontSize: 11, color: 'var(--green)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>✓ {f.name}</div>}
+                    </div>
+                    <label className={`btn btn-sm ${f ? 'btn-ghost' : 'btn-primary'}`} style={{ cursor: 'pointer' }}>{f ? 'Replace' : 'Choose file'}<input type="file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" style={{ display: 'none' }} onChange={e => pickDoc(e, key)} /></label>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {step === 6 && (
+          <div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Check everything before you submit. Use Back to change anything.</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '8px 0 2px' }}>PARENT / GUARDIAN</div>
+            <Row l="Name" v={`${g.full_name} (${relationship})`} /><Row l="Phone" v={[g.phone, g.alt_phone].filter(Boolean).join(' / ')} /><Row l="Lives at" v={g.residence} />
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>ALTERNATIVE CONTACT</div>
+            <Row l="Name" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><Row l="Phone" v={g.alt_contact_phone} />
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>CHILD</div>
+            <Row l="Name" v={c.full_name} /><Row l="Date of birth" v={c.date_of_birth} /><Row l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
+            <Row l="Lives at" v={c.home_address} /><Row l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
+            <Row l="Medical" v={c.medical_conditions} /><Row l="Allergies" v={c.allergies} />
+            <Row l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
+          </div>
+        )}
+      </div>
+      <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={step === 0 ? onClose : back} disabled={saving}>{step === 0 ? 'Cancel' : 'Back'}</button>
+        {step < WIZARD_STEPS.length - 1
+          ? <button className="btn btn-primary" onClick={next}>Next</button>
+          : <button className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? 'Submitting...' : 'Submit for approval'}</button>}
+      </div>
+    </Modal>
+  )
+}
+
 function ParentDashboard({ club, profile, setPage }) {
   const [children, setChildren] = useState([])
   const [fees, setFees] = useState([])
@@ -1365,13 +1606,16 @@ function ParentDashboard({ club, profile, setPage }) {
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(null)
+  const [me, setMe] = useState(profile)
 
   const load = useCallback(async () => {
-    const [{ data: links }, { data: f }, { data: fx }] = await Promise.all([
+    const [{ data: links }, { data: f }, { data: fx }, { data: fresh }] = await Promise.all([
       supabase.from('parent_player_links').select('relationship, player:players(*)').eq('parent_profile_id', profile.id),
       supabase.from('fees').select('*, player:players(full_name)').order('due_date', { ascending: true }),
       supabase.from('fixtures').select('*').eq('club_id', club.id).eq('status', 'upcoming').order('match_date', { ascending: true }).limit(3),
+      supabase.from('profiles').select('*').eq('id', profile.id).maybeSingle(),
     ])
+    if (fresh) setMe(fresh)
     setChildren((links || []).map(l => ({ ...l.player, relationship: l.relationship })).filter(p => p && p.id))
     setFees(f || [])
     setNext(fx || [])
@@ -1445,7 +1689,7 @@ function ParentDashboard({ club, profile, setPage }) {
         </div>
       </div>
 
-      {showAdd && <PlayerRegistrationModal mode="parent" club={club} profile={profile} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      {showAdd && <ParentRegistrationWizard club={club} profile={me} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole="parent" onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
     </div>
   )
@@ -1464,7 +1708,7 @@ function ApprovalsPage({ club, profile, onChanged }) {
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
       .from('players')
-      .select('*, links:parent_player_links(relationship, parent:profiles!parent_player_links_parent_profile_id_fkey(full_name, phone, email))')
+      .select('*, links:parent_player_links(relationship, parent:profiles!parent_player_links_parent_profile_id_fkey(full_name, phone, alt_phone, email, residence, occupation, alt_contact_name, alt_contact_relationship, alt_contact_phone))')
       .eq('club_id', club.id).eq('status', 'pending').order('created_at', { ascending: true })
     if (err) setError(err.message)
     setItems(data || [])
@@ -1521,6 +1765,7 @@ function ApprovalsPage({ club, profile, onChanged }) {
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                       {par ? `${link.relationship}: ${par.full_name}${par.phone ? ' · ' + par.phone : ''}${par.email ? ' · ' + par.email : ''}` : 'Parent details unavailable'}
                     </div>
+                    {par?.alt_contact_name && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>Alternative: {par.alt_contact_name} ({par.alt_contact_relationship}) · {par.alt_contact_phone}</div>}
                   </div>
                   <button className="btn btn-ghost btn-sm" onClick={() => setSelected(p)}>Review details & documents</button>
                 </div>
