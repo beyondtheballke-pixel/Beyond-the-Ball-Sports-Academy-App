@@ -283,6 +283,8 @@ function SquadPage({ club, userRole }) {
   const [players, setPlayers] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('All')
+  const [centerFilter, setCenterFilter] = useState('all')
+  const [centers, setCenters] = useState([])
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -290,6 +292,8 @@ function SquadPage({ club, userRole }) {
   const load = useCallback(async () => {
     const { data } = await supabase.from('players').select('*').eq('club_id', club.id).not('status', 'in', '(pending,rejected)').order('squad_number', { ascending: true })
     setPlayers(data || [])
+    const { data: cs } = await supabase.from('training_centers').select('id,name').eq('club_id', club.id)
+    setCenters(cs || [])
     setLoading(false)
   }, [club.id])
 
@@ -298,7 +302,8 @@ function SquadPage({ club, userRole }) {
   const filtered = players.filter(p => {
     const matchPos = filter === 'All' || p.position === filter
     const matchSearch = !search || p.full_name.toLowerCase().includes(search.toLowerCase())
-    return matchPos && matchSearch
+    const matchCenter = centerFilter === 'all' || p.training_center_id === centerFilter
+    return matchPos && matchSearch && matchCenter
   })
 
   if (loading) return <Spinner />
@@ -315,6 +320,12 @@ function SquadPage({ club, userRole }) {
         <input style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '8px 12px', color: 'var(--text)', fontSize: 13, outline: 'none' }}
           placeholder="Search players..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
+      {centers.length > 0 && (
+        <div className="filter-pills">
+          <button className={`pill ${centerFilter === 'all' ? 'active' : ''}`} onClick={() => setCenterFilter('all')}>All centres</button>
+          {centers.map(c => <button key={c.id} className={`pill ${centerFilter === c.id ? 'active' : ''}`} onClick={() => setCenterFilter(c.id)}>{c.name.split(' ')[0]}</button>)}
+        </div>
+      )}
       <div className="filter-pills">
         {['All', 'Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => (
           <button key={p} className={`pill ${filter === p ? 'active' : ''}`} onClick={() => setFilter(p)}>
@@ -336,6 +347,7 @@ function SquadPage({ club, userRole }) {
                 <div className="player-card-body">
                   <div className="player-card-name">{p.full_name}</div>
                   <div className="player-card-pos">{p.position_detail || p.position || '—'}</div>
+                  {p.sponsored && <div style={{ fontSize: 10, color: 'var(--btb-gold)', marginTop: 2 }}>Sponsored</div>}
                 </div>
               </div>
             ))}
@@ -356,7 +368,8 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
   const [error, setError] = useState('')
   const [warning, setWarning] = useState('')
   const [relationship, setRelationship] = useState('mother')
-  const [form, setForm] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', squad_number: '', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', school_name: '', school_grade: '', home_address: '', contract_start: '', contract_end: '' })
+  const [form, setForm] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', squad_number: '', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', school_name: '', school_grade: '', home_address: '', contract_start: '', contract_end: '', training_center_id: '', sponsored: false })
+  const [centers, setCenters] = useState([])
   const [photo, setPhoto] = useState(null)
   const [photoPreview, setPhotoPreview] = useState('')
   const [files, setFiles] = useState({})
@@ -364,6 +377,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
   const docTypes = DOC_TYPES.filter(d => !(isParent && d.staffOnly))
 
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
+  useEffect(() => { supabase.from('training_centers').select('id,name').eq('club_id', club.id).eq('is_active', true).order('name').then(({ data }) => setCenters(data || [])) }, [club.id])
 
   const pickPhoto = (e) => {
     const f = e.target.files[0]; if (!f) return
@@ -397,8 +411,12 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
         height_cm: form.height_cm ? parseInt(form.height_cm) : null, weight_kg: form.weight_kg ? parseInt(form.weight_kg) : null,
         school_name: form.school_name || null, school_grade: form.school_grade || null, home_address: form.home_address || null,
         contract_start: form.contract_start || null, contract_end: form.contract_end || null, status: 'active', is_active: true,
+        training_center_id: form.training_center_id || null, sponsored: !!form.sponsored,
       })
       if (err) { setError(err.message); setSaving(false); return }
+      if ((club.registration_fee ?? 0) > 0) {
+        await supabase.from('fees').insert({ club_id: club.id, player_id: playerId, description: 'Registration fee (includes two sets of kits)', amount: club.registration_fee, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10), status: form.sponsored ? 'waived' : 'unpaid', term: 'Registration', fee_type: 'registration' })
+      }
     }
 
     // 2. upload photo and documents (the record already exists, so failures here are not fatal)
@@ -480,6 +498,8 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
         )}
         {tab === 'academy' && (
           <div className="form-grid">
+            <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Training centre</label><select value={form.training_center_id} onChange={e => set('training_center_id', e.target.value)}><option value="">Select a centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+            <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontSize: 13 }}><input type="checkbox" style={{ width: 'auto' }} checked={form.sponsored} onChange={e => set('sponsored', e.target.checked)} /> Sponsored player (fees waived)</label>
             <div className="form-group"><label>School name</label><input value={form.school_name} onChange={e => set('school_name', e.target.value)} placeholder="e.g. Nyeri Primary School" /></div>
             <div className="form-group"><label>Grade / class</label><input value={form.school_grade} onChange={e => set('school_grade', e.target.value)} placeholder="e.g. Grade 7" /></div>
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Home address</label><textarea value={form.home_address} onChange={e => set('home_address', e.target.value)} placeholder="Estate / village, town" /></div>
@@ -520,6 +540,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
   const [tab, setTab] = useState('profile')
   const [docs, setDocs] = useState([])
   const [goals, setGoals] = useState({ goals: 0, assists: 0, matches: 0, rating: null })
+  const [centerName, setCenterName] = useState('')
   const [newType, setNewType] = useState('birth_certificate')
   const [uploading, setUploading] = useState(false)
   const [msg, setMsg] = useState(null)
@@ -547,6 +568,8 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
     }
     load()
   }, [player.id, loadDocs])
+
+  useEffect(() => { if (player.training_center_id) supabase.from('training_centers').select('name').eq('id', player.training_center_id).maybeSingle().then(({ data }) => setCenterName(data?.name || '')) }, [player.training_center_id])
 
   const addDoc = async (e) => {
     const file = e.target.files[0]; e.target.value = ''
@@ -604,7 +627,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
         </div>
         {tab === 'profile' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
+            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Training centre', v: centerName }, ...(isStaff && player.sponsored ? [{ l: 'Sponsorship', v: player.sponsorship_note || 'Sponsored (fees waived)' }] : []), { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
               <div key={l}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
@@ -982,52 +1005,91 @@ function AddTrainingModal({ club, onClose, onSaved }) {
   )
 }
 
+const FEE_TYPES = [{ key: 'transport', label: 'Transport' }, { key: 'kit', label: 'Kit' }, { key: 'monthly', label: 'Monthly training' }, { key: 'registration', label: 'Registration' }, { key: 'other', label: 'Other' }]
+
 function FeesPage({ club }) {
   const [fees, setFees] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [players, setPlayers] = useState([])
+  const [centers, setCenters] = useState([])
+  const [payFee, setPayFee] = useState(null)
+  const [msg, setMsg] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [settings, setSettings] = useState({ registration_fee: club.registration_fee ?? 2500, monthly_fee: club.monthly_fee ?? 2500 })
+  const [filter, setFilter] = useState('open')
 
   const load = useCallback(async () => {
-    const [{ data: f }, { data: p }] = await Promise.all([
-      supabase.from('fees').select('*, player:players(full_name,squad_number)').eq('club_id', club.id).order('created_at', { ascending: false }),
-      supabase.from('players').select('id,full_name,squad_number').eq('club_id', club.id).eq('is_active', true)
+    const [{ data: f }, { data: p }, { data: c }] = await Promise.all([
+      supabase.from('fees').select('*, player:players(full_name,squad_number,sponsored)').eq('club_id', club.id).order('created_at', { ascending: false }),
+      supabase.from('players').select('id,full_name,squad_number,sponsored,training_center_id').eq('club_id', club.id).eq('is_active', true).order('full_name'),
+      supabase.from('training_centers').select('*').eq('club_id', club.id).eq('is_active', true),
     ])
-    setFees(f || [])
-    setPlayers(p || [])
-    setLoading(false)
+    setFees(f || []); setPlayers(p || []); setCenters(c || []); setLoading(false)
   }, [club.id])
 
   useEffect(() => { load() }, [load])
 
-  const totalPending = fees.filter(f => f.status !== 'paid' && f.status !== 'waived').reduce((s, f) => s + (f.amount - (f.paid_amount || 0)), 0)
+  const generate = async () => {
+    setBusy(true); setMsg(null)
+    const { data, error } = await supabase.rpc('generate_monthly_fees', { p_month: new Date().toISOString().slice(0, 10) })
+    setBusy(false)
+    if (error) setMsg({ kind: 'error', text: error.message })
+    else { setMsg({ kind: 'ok', text: data === 0 ? 'This month\'s fees were already generated.' : `Created ${data} monthly fee${data === 1 ? '' : 's'} (sponsored players are marked waived).` }); load() }
+  }
+
+  const saveSettings = async () => {
+    const reg = parseInt(settings.registration_fee), mon = parseInt(settings.monthly_fee)
+    if (isNaN(reg) || isNaN(mon) || reg < 0 || mon < 0) { setMsg({ kind: 'error', text: 'Enter valid amounts' }); return }
+    const { error } = await supabase.from('clubs').update({ registration_fee: reg, monthly_fee: mon }).eq('id', club.id)
+    setMsg(error ? { kind: 'error', text: error.message } : { kind: 'ok', text: 'Fee amounts saved. They apply to new registrations and new months.' })
+  }
+
+  const waive = async (f) => {
+    if (!confirm(`Waive "${f.description}" for ${f.player?.full_name}?`)) return
+    const { error } = await supabase.from('fees').update({ status: 'waived' }).eq('id', f.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else load()
+  }
+
+  const open = fees.filter(f => f.status !== 'paid' && f.status !== 'waived')
+  const totalPending = open.reduce((s, f) => s + (f.amount - (f.paid_amount || 0)), 0)
   const totalCollected = fees.reduce((s, f) => s + (f.paid_amount || 0), 0)
+  const waivedTotal = fees.filter(f => f.status === 'waived').reduce((s, f) => s + f.amount, 0)
+  const shown = filter === 'open' ? open : filter === 'waived' ? fees.filter(f => f.status === 'waived') : filter === 'paid' ? fees.filter(f => f.status === 'paid') : fees
 
   if (loading) return <Spinner />
 
   return (
     <div className="page">
       <div className="page-hdr">
-        <div><div className="page-title">Fee management</div><div className="page-sub">Academy program fees</div></div>
-        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add fee</button>
+        <div><div className="page-title">Fee management</div><div className="page-sub">Registration {fmtKES(settings.registration_fee)} · Monthly {fmtKES(settings.monthly_fee)}</div></div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-ghost" onClick={generate} disabled={busy}>{busy ? 'Working...' : 'Generate this month\'s fees'}</button>
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add fee</button>
+        </div>
       </div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
       <div className="stat-grid" style={{ marginBottom: 20 }}>
         <div className="stat-card"><div className="stat-label">Pending</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalPending)}</div><div className="stat-change down">Outstanding</div></div>
         <div className="stat-card"><div className="stat-label">Collected</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalCollected)}</div><div className="stat-change up">Received</div></div>
+        <div className="stat-card"><div className="stat-label">Waived</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(waivedTotal)}</div><div className="stat-change neutral">Sponsorship</div></div>
       </div>
-      <div className="card">
+      <div className="filter-pills">
+        {[['open', 'Outstanding'], ['paid', 'Paid'], ['waived', 'Waived'], ['all', 'All']].map(([k, l]) => <button key={k} className={`pill ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}
+      </div>
+      <div className="card" style={{ marginBottom: 16 }}>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Player</th><th>Description</th><th>Amount</th><th>Paid</th><th>Due</th><th>Status</th></tr></thead>
+            <thead><tr><th>Player</th><th>Description</th><th>Amount</th><th>Paid</th><th>Due</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {fees.length === 0
-                ? <tr><td colSpan={6}><div className="empty"><div className="empty-sub">No fees recorded yet</div></div></td></tr>
-                : fees.map(f => (
+              {shown.length === 0
+                ? <tr><td colSpan={7}><div className="empty"><div className="empty-sub">Nothing here</div></div></td></tr>
+                : shown.map(f => (
                   <tr key={f.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div className="avatar avatar-sm">{initials(f.player?.full_name)}</div>
-                        <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.player?.full_name || '—'}</div>{f.term && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.term}</div>}</div>
+                        <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.player?.full_name || '—'}</div><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.player?.sponsored ? 'Sponsored' : f.term || ''}</div></div>
                       </div>
                     </td>
                     <td>{f.description}</td>
@@ -1035,37 +1097,110 @@ function FeesPage({ club }) {
                     <td>{fmtKES(f.paid_amount)}</td>
                     <td>{fmtDate(f.due_date)}</td>
                     <td><span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`}>{f.status}</span></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {f.status !== 'paid' && f.status !== 'waived' && <>
+                        <button className="btn btn-primary btn-sm" onClick={() => setPayFee(f)}>Record payment</button>{' '}
+                        <button className="btn btn-ghost btn-sm" onClick={() => waive(f)}>Waive</button>
+                      </>}
+                    </td>
                   </tr>
                 ))}
             </tbody>
           </table>
         </div>
       </div>
-      {showAdd && <AddFeeModal club={club} players={players} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      <div className="card">
+        <div className="card-hdr"><div className="card-title">Fee amounts</div></div>
+        <div className="card-body">
+          <div className="form-grid">
+            <div className="form-group"><label>Registration fee (KES, includes two kits)</label><input type="number" min="0" value={settings.registration_fee} onChange={e => setSettings(s => ({ ...s, registration_fee: e.target.value }))} /></div>
+            <div className="form-group"><label>Monthly training fee (KES)</label><input type="number" min="0" value={settings.monthly_fee} onChange={e => setSettings(s => ({ ...s, monthly_fee: e.target.value }))} /></div>
+          </div>
+          <button className="btn btn-ghost btn-sm" style={{ marginTop: 10 }} onClick={saveSettings}>Save amounts</button>
+        </div>
+      </div>
+      {showAdd && <AddFeeModal club={club} players={players} centers={centers} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      {payFee && <PaymentModal fee={payFee} onClose={() => setPayFee(null)} onSaved={() => { setPayFee(null); load() }} />}
     </div>
   )
 }
 
-function AddFeeModal({ club, players, onClose, onSaved }) {
-  const [form, setForm] = useState({ player_id: '', description: '', amount: '', due_date: '', term: '' })
+function PaymentModal({ fee, onClose, onSaved }) {
+  const balance = fee.amount - (fee.paid_amount || 0)
+  const [amount, setAmount] = useState(String(balance))
+  const [method, setMethod] = useState('mpesa')
+  const [ref, setRef] = useState('')
   const [saving, setSaving] = useState(false)
-  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
+  const [error, setError] = useState('')
 
   const save = async () => {
-    if (!form.player_id || !form.description || !form.amount) return
-    setSaving(true)
-    await supabase.from('fees').insert({ club_id: club.id, player_id: form.player_id, description: form.description, amount: parseInt(form.amount), due_date: form.due_date || null, term: form.term || null, status: 'unpaid' })
-    setSaving(false); onSaved()
+    const a = parseInt(amount)
+    if (!a || a <= 0) { setError('Enter the amount received'); return }
+    if (a > balance) { setError(`That is more than the balance of ${fmtKES(balance)}`); return }
+    setSaving(true); setError('')
+    const paid = (fee.paid_amount || 0) + a
+    const { error: err } = await supabase.from('fees').update({ paid_amount: paid, status: paid >= fee.amount ? 'paid' : 'partial', payment_method: method, mpesa_ref: ref.trim() || null }).eq('id', fee.id)
+    setSaving(false)
+    if (err) { setError(err.message); return }
+    onSaved()
+  }
+
+  return (
+    <Modal title="Record payment" onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div style={{ fontSize: 13, marginBottom: 12 }}><strong>{fee.player?.full_name}</strong> · {fee.description}<br /><span style={{ color: 'var(--text-muted)' }}>Balance {fmtKES(balance)}</span></div>
+        <div className="form-grid">
+          <div className="form-group"><label>Amount received (KES)</label><input type="number" value={amount} onChange={e => setAmount(e.target.value)} /></div>
+          <div className="form-group"><label>Method</label><select value={method} onChange={e => setMethod(e.target.value)}><option value="mpesa">M-Pesa</option><option value="cash">Cash</option><option value="bank">Bank</option></select></div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>M-Pesa / receipt reference</label><input value={ref} onChange={e => setRef(e.target.value)} placeholder="e.g. SJK3L9XXXX" /></div>
+        </div>
+      </div>
+      <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save payment'}</button>
+      </div>
+    </Modal>
+  )
+}
+
+function AddFeeModal({ club, players, centers, onClose, onSaved }) {
+  const [form, setForm] = useState({ target: 'player', player_id: '', center_id: '', fee_type: 'transport', description: 'Transport', amount: '', due_date: '', term: '', skip_sponsored: true })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
+
+  const chooseType = (t) => { setForm(f => ({ ...f, fee_type: t, description: FEE_TYPES.find(x => x.key === t)?.label || '' })) }
+
+  const save = async () => {
+    const amt = parseInt(form.amount)
+    if (!form.description.trim() || !amt || amt <= 0) { setError('Description and a valid amount are required'); return }
+    let targets = []
+    if (form.target === 'player') { if (!form.player_id) { setError('Choose a player'); return } targets = players.filter(p => p.id === form.player_id) }
+    else if (form.target === 'center') { if (!form.center_id) { setError('Choose a training centre'); return } targets = players.filter(p => p.training_center_id === form.center_id) }
+    else targets = players
+    if (form.target !== 'player' && form.skip_sponsored) targets = targets.filter(p => !p.sponsored)
+    if (targets.length === 0) { setError('No players match this selection'); return }
+    setSaving(true); setError('')
+    const rows = targets.map(p => ({ club_id: club.id, player_id: p.id, description: form.description.trim(), amount: amt, due_date: form.due_date || null, term: form.term || null, status: p.sponsored && form.target === 'player' ? 'unpaid' : 'unpaid', fee_type: form.fee_type }))
+    const { error: err } = await supabase.from('fees').insert(rows)
+    setSaving(false)
+    if (err) { setError(err.message); return }
+    onSaved()
   }
 
   return (
     <Modal title="Add fee" onClose={onClose}>
       <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
         <div className="form-grid">
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Player *</label><select value={form.player_id} onChange={e => set('player_id', e.target.value)}><option value="">Select player</option>{players.map(p => <option key={p.id} value={p.id}>{p.squad_number ? `#${p.squad_number} ` : ''}{p.full_name}</option>)}</select></div>
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Description *</label><input value={form.description} onChange={e => set('description', e.target.value)} placeholder="e.g. Term 2 academy fee" /></div>
-          <div className="form-group"><label>Amount (KES) *</label><input type="number" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="e.g. 5000" /></div>
-          <div className="form-group"><label>Term</label><input value={form.term} onChange={e => set('term', e.target.value)} placeholder="e.g. Term 2, 2025" /></div>
+          <div className="form-group"><label>Charge</label><select value={form.fee_type} onChange={e => chooseType(e.target.value)}>{FEE_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
+          <div className="form-group"><label>Apply to</label><select value={form.target} onChange={e => set('target', e.target.value)}><option value="player">One player</option><option value="center">Everyone at a training centre</option><option value="all">All active players</option></select></div>
+          {form.target === 'player' && <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Player *</label><select value={form.player_id} onChange={e => set('player_id', e.target.value)}><option value="">Select player</option>{players.map(p => <option key={p.id} value={p.id}>{p.squad_number ? `#${p.squad_number} ` : ''}{p.full_name}{p.sponsored ? ' (sponsored)' : ''}</option>)}</select></div>}
+          {form.target === 'center' && <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Training centre *</label><select value={form.center_id} onChange={e => set('center_id', e.target.value)}><option value="">Select centre</option>{centers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>}
+          {form.target !== 'player' && <label style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center', fontSize: 13 }}><input type="checkbox" style={{ width: 'auto' }} checked={form.skip_sponsored} onChange={e => set('skip_sponsored', e.target.checked)} /> Skip sponsored players</label>}
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Description *</label><input value={form.description} onChange={e => set('description', e.target.value)} placeholder="e.g. Transport to away match" /></div>
+          <div className="form-group"><label>Amount (KES) *</label><input type="number" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="e.g. 500" /></div>
           <div className="form-group"><label>Due date</label><input type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} /></div>
         </div>
       </div>
@@ -1380,7 +1515,8 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     residence: profile.residence || '', occupation: profile.occupation || '',
     alt_contact_name: profile.alt_contact_name || '', alt_contact_relationship: profile.alt_contact_relationship || '', alt_contact_phone: profile.alt_contact_phone || '',
   })
-  const [c, setC] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', home_address: '', school_name: '', school_grade: '', medical_conditions: '', allergies: '' })
+  const [c, setC] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', home_address: '', school_name: '', school_grade: '', medical_conditions: '', allergies: '', training_center_id: '' })
+  const [centers, setCenters] = useState([])
   const [consent, setConsent] = useState(false)
   const [photo, setPhoto] = useState(null)
   const [photoPreview, setPhotoPreview] = useState('')
@@ -1391,6 +1527,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
   const today = new Date().toISOString().slice(0, 10)
 
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
+  useEffect(() => { supabase.from('training_centers').select('id,name,address').eq('club_id', club.id).eq('is_active', true).order('name').then(({ data }) => setCenters(data || [])) }, [club.id])
 
   // returns an error message if the step is incomplete
   const validate = (i) => {
@@ -1414,6 +1551,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     }
     if (i === 3) {
       if (c.home_address.trim().length < 3) return 'Enter where the child lives'
+      if (!c.training_center_id) return 'Choose the training centre your child will attend'
       if (c.school_name.trim().length < 2) return 'Enter the child\'s school'
     }
     if (i === 4) {
@@ -1532,6 +1670,9 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
 
         {step === 3 && (
           <div className="form-grid">
+            <Field label="Training centre *" full>
+              <select value={c.training_center_id} onChange={e => setCv('training_center_id', e.target.value)}><option value="">Select a centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+            </Field>
             <Field label="Where the child lives *" full>
               <textarea value={c.home_address} onChange={e => setCv('home_address', e.target.value)} placeholder="Estate / village, town, landmark" />
               {g.residence && c.home_address !== g.residence && <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCv('home_address', g.residence)}>Same as my address</button>}
@@ -1577,13 +1718,14 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
         {step === 6 && (
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Check everything before you submit. Use Back to change anything.</div>
+            <Note kind="info" style={{ marginBottom: 8 }}>Fees: registration {fmtKES(club.registration_fee ?? 2500)} (includes two sets of kits) and {fmtKES(club.monthly_fee ?? 2500)} per month for training. The academy will confirm once your registration is approved.</Note>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '8px 0 2px' }}>PARENT / GUARDIAN</div>
             <Row l="Name" v={`${g.full_name} (${relationship})`} /><Row l="Phone" v={[g.phone, g.alt_phone].filter(Boolean).join(' / ')} /><Row l="Lives at" v={g.residence} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>ALTERNATIVE CONTACT</div>
             <Row l="Name" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><Row l="Phone" v={g.alt_contact_phone} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>CHILD</div>
             <Row l="Name" v={c.full_name} /><Row l="Date of birth" v={c.date_of_birth} /><Row l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
-            <Row l="Lives at" v={c.home_address} /><Row l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
+            <Row l="Training centre" v={centers.find(t => t.id === c.training_center_id)?.name} /><Row l="Lives at" v={c.home_address} /><Row l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
             <Row l="Medical" v={c.medical_conditions} /><Row l="Allergies" v={c.allergies} />
             <Row l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
           </div>
@@ -1702,6 +1844,8 @@ function ApprovalsPage({ club, profile, onChanged }) {
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [squadNo, setSquadNo] = useState({})
+  const [centers, setCenters] = useState([])
+  const [opts, setOpts] = useState({})
   const [rejecting, setRejecting] = useState(null)
   const [note, setNote] = useState('')
 
@@ -1716,14 +1860,15 @@ function ApprovalsPage({ club, profile, onChanged }) {
   }, [club.id])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { supabase.from('training_centers').select('id,name').eq('club_id', club.id).eq('is_active', true).order('name').then(({ data }) => setCenters(data || [])) }, [club.id])
+  const optOf = (p) => ({ center: p.training_center_id || '', sponsored: false, note: '', ...(opts[p.id] || {}) })
+  const setOpt = (p, k, v) => setOpts(o => ({ ...o, [p.id]: { ...optOf(p), [k]: v } }))
 
   const approve = async (p) => {
     setBusy(p.id); setError('')
-    const sq = squadNo[p.id]
-    const { error: err } = await supabase.from('players').update({
-      status: 'active', is_active: true, squad_number: sq ? parseInt(sq) : null,
-      reviewed_by: profile.id, reviewed_at: new Date().toISOString(), rejection_note: null,
-    }).eq('id', p.id)
+    const sq = squadNo[p.id]; const o = optOf(p)
+    if (!o.center) { setBusy(''); setError('Choose a training centre first'); return }
+    const { error: err } = await supabase.rpc('approve_player', { p_player: p.id, p_squad_number: sq ? parseInt(sq) : null, p_center: o.center, p_sponsored: o.sponsored, p_note: o.note || null })
     setBusy('')
     if (err) { setError(err.message.includes('duplicate') ? 'That squad number is already taken' : err.message); return }
     load(); onChanged && onChanged()
@@ -1779,7 +1924,10 @@ function ApprovalsPage({ club, profile, onChanged }) {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <input type="number" min="0" max="99" placeholder="Squad #" value={squadNo[p.id] || ''} onChange={e => setSquadNo(s => ({ ...s, [p.id]: e.target.value }))} style={{ width: 100 }} />
+                    <select value={optOf(p).center} onChange={e => setOpt(p, 'center', e.target.value)} style={{ minWidth: 180 }}><option value="">Training centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                    <input type="number" min="0" max="99" placeholder="Squad #" value={squadNo[p.id] || ''} onChange={e => setSquadNo(s => ({ ...s, [p.id]: e.target.value }))} style={{ width: 90 }} />
+                    <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}><input type="checkbox" style={{ width: 'auto' }} checked={optOf(p).sponsored} onChange={e => setOpt(p, 'sponsored', e.target.checked)} /> Sponsored (waive fees)</label>
+                    {optOf(p).sponsored && <input placeholder="Sponsor / note" value={optOf(p).note} onChange={e => setOpt(p, 'note', e.target.value)} style={{ minWidth: 150 }} />}
                     <button className="btn btn-primary btn-sm" disabled={busy === p.id} onClick={() => approve(p)}>{busy === p.id ? 'Saving...' : '✓ Approve'}</button>
                     <button className="btn btn-ghost btn-sm" onClick={() => { setRejecting(p.id); setNote(''); setError('') }}>Reject</button>
                   </div>
