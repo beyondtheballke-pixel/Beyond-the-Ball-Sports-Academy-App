@@ -19,6 +19,17 @@ const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d
 const LOGO = '/bb-logo.jpg'
 const HOLIDAY_FORMATS = [['Under 9', '5v5'], ['Under 11', '7v7'], ['Under 13', '9v9'], ['Under 15', '11v11']]
 const oursTheirs = (f) => f.is_home ? [f.home_score ?? 0, f.away_score ?? 0] : [f.away_score ?? 0, f.home_score ?? 0]
+const AGE_GROUPS = ['U7', 'U9', 'U11', 'U13', 'U15', 'U17', 'U19', 'Open']
+const FORMAT_OF = Object.fromEntries(HOLIDAY_FORMATS.map(([a, f]) => ['U' + a.replace('Under ', ''), f]))
+// Age is counted as at 31 December of this year (year-of-birth rule). A manager can override the group.
+const autoAgeGroup = (dob) => {
+  if (!dob) return ''
+  const a = new Date().getFullYear() - parseInt(String(dob).slice(0, 4))
+  return a <= 6 ? 'U7' : a <= 8 ? 'U9' : a <= 10 ? 'U11' : a <= 12 ? 'U13' : a <= 14 ? 'U15' : a <= 16 ? 'U17' : a <= 18 ? 'U19' : 'Open'
+}
+const ageGroupOf = (p) => p?.age_group_override || autoAgeGroup(p?.date_of_birth)
+const nairobiDate = (d) => new Date(d).toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })
+const nairobiTime = (d) => new Date(d).toLocaleTimeString('en-GB', { timeZone: 'Africa/Nairobi', hour: '2-digit', minute: '2-digit' })
 const venueOf = (f) => f.venue || (f.is_home ? 'Venue to be announced' : 'Away')
 const fmtKES = (n) => `KES ${(n || 0).toLocaleString()}`
 
@@ -98,10 +109,11 @@ const CLUB_SLUG = 'btb'
 
 function Login() {
   const [mode, setMode] = useState('signin')
-  const [form, setForm] = useState({ full_name: '', phone: '', email: '', password: '', confirm: '' })
+  const [form, setForm] = useState({ full_name: '', phone: '', email: '', password: '', confirm: '', code: '' })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [coachMode, setCoachMode] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const isSignup = mode === 'signup'
 
@@ -109,6 +121,7 @@ function Login() {
     e.preventDefault()
     setError(''); setNotice('')
     if (isSignup) {
+      if (coachMode && form.code.trim().length < 8) { setError('Enter the invite code from the academy manager'); return }
       if (form.full_name.trim().length < 2) { setError('Please enter your full name'); return }
       if (form.password.length < 8) { setError('Password must be at least 8 characters'); return }
       if (form.password !== form.confirm) { setError('Passwords do not match'); return }
@@ -117,7 +130,7 @@ function Login() {
     if (isSignup) {
       const { data, error: err } = await supabase.auth.signUp({
         email: form.email.trim(), password: form.password,
-        options: { data: { full_name: form.full_name.trim(), phone: form.phone.trim() } }
+        options: { data: { full_name: form.full_name.trim(), phone: form.phone.trim(), invite_code: coachMode ? form.code.trim().toUpperCase() : '' } }
       })
       if (err) { setError(err.message); setLoading(false); return }
       // If email confirmation is switched on there is no session yet.
@@ -134,12 +147,13 @@ function Login() {
       <div className="login-card">
         <img src={LOGO} alt="Beyond the Ball" style={{ width: 96, height: 96, borderRadius: 16, margin: '0 auto 12px', display: 'block' }} />
         <div className="login-title">Beyond the Ball</div>
-        <div className="login-sub">{isSignup ? 'Parent & guardian registration' : 'Sports Academy Platform'}</div>
+        <div className="login-sub">{isSignup ? (coachMode ? 'Coach registration' : 'Parent & guardian registration') : 'Sports Academy Platform'}</div>
         {error && <div className="login-error">{error}</div>}
         {notice && <Note kind="ok" style={{ marginBottom: 12 }}>{notice}</Note>}
         <form onSubmit={submit}>
           {isSignup && (
             <>
+              {coachMode && <div className="form-group" style={{ marginBottom: 12 }}><label>Invite code</label><input value={form.code} onChange={e => set('code', e.target.value.toUpperCase())} placeholder="BTB-XXXXXXXX" autoCapitalize="characters" /></div>}
               <div className="form-group" style={{ marginBottom: 12 }}>
                 <label>Your full name</label>
                 <input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="Parent / guardian name" required maxLength={100} />
@@ -165,7 +179,7 @@ function Login() {
             </div>
           )}
           <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={loading}>
-            {loading ? 'Please wait...' : isSignup ? 'Create parent account' : 'Sign in'}
+            {loading ? 'Please wait...' : isSignup ? (coachMode ? 'Create coach account' : 'Create parent account') : 'Sign in'}
           </button>
         </form>
         <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
@@ -174,7 +188,8 @@ function Login() {
             {isSignup ? 'Sign in' : 'Register here'}
           </button>
         </div>
-        {isSignup && <div style={{ textAlign: 'center', marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>After signing up you can register your child. The academy reviews every registration before a child joins the squad.</div>}
+        {isSignup && <label style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 12, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}><input type="checkbox" style={{ width: 'auto' }} checked={coachMode} onChange={e => setCoachMode(e.target.checked)} /> I'm a coach with an invite code</label>}
+        {isSignup && !coachMode && <div style={{ textAlign: 'center', marginTop: 10, fontSize: 11, color: 'var(--text-dim)' }}>After signing up you can register your child. The academy reviews every registration before a child joins the squad.</div>}
       </div>
     </div>
   )
@@ -288,6 +303,7 @@ function SquadPage({ club, userRole }) {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('All')
   const [centerFilter, setCenterFilter] = useState('all')
+  const [ageFilter, setAgeFilter] = useState('all')
   const [centers, setCenters] = useState([])
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
@@ -307,7 +323,8 @@ function SquadPage({ club, userRole }) {
     const matchPos = filter === 'All' || p.position === filter
     const matchSearch = !search || p.full_name.toLowerCase().includes(search.toLowerCase())
     const matchCenter = centerFilter === 'all' || p.training_center_id === centerFilter
-    return matchPos && matchSearch && matchCenter
+    const matchAge = ageFilter === 'all' || ageGroupOf(p) === ageFilter
+    return matchPos && matchSearch && matchCenter && matchAge
   })
 
   if (loading) return <Spinner />
@@ -331,6 +348,10 @@ function SquadPage({ club, userRole }) {
         </div>
       )}
       <div className="filter-pills">
+        <button className={`pill ${ageFilter === 'all' ? 'active' : ''}`} onClick={() => setAgeFilter('all')}>All ages</button>
+        {AGE_GROUPS.filter(g => players.some(p => ageGroupOf(p) === g)).map(g => <button key={g} className={`pill ${ageFilter === g ? 'active' : ''}`} onClick={() => setAgeFilter(g)}>{g} ({players.filter(p => ageGroupOf(p) === g).length})</button>)}
+      </div>
+      <div className="filter-pills">
         {['All', 'Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => (
           <button key={p} className={`pill ${filter === p ? 'active' : ''}`} onClick={() => setFilter(p)}>
             {p === 'Goalkeeper' ? 'GK' : p === 'Defender' ? 'DEF' : p === 'Midfielder' ? 'MID' : p === 'Forward' ? 'FWD' : p}
@@ -350,7 +371,7 @@ function SquadPage({ club, userRole }) {
                 </div>
                 <div className="player-card-body">
                   <div className="player-card-name">{p.full_name}</div>
-                  <div className="player-card-pos">{p.position_detail || p.position || '—'}</div>
+                  <div className="player-card-pos">{ageGroupOf(p) ? ageGroupOf(p) + ' · ' : ''}{p.position_detail || p.position || '—'}</div>
                   {p.sponsored && <div style={{ fontSize: 10, color: 'var(--btb-gold)', marginTop: 2 }}>Sponsored</div>}
                 </div>
               </div>
@@ -631,7 +652,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
         </div>
         {tab === 'profile' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Training centre', v: centerName }, ...(isStaff && player.sponsored ? [{ l: 'Sponsorship', v: player.sponsorship_note || 'Sponsored (fees waived)' }] : []), { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
+            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Age group', v: ageGroupOf(player) }, { l: 'Training centre', v: centerName }, ...(isStaff && player.sponsored ? [{ l: 'Sponsorship', v: player.sponsorship_note || 'Sponsored (fees waived)' }] : []), { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
               <div key={l}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
@@ -810,6 +831,8 @@ function MatchCentrePage({ club, userRole }) {
   const [form, setForm] = useState({ minute: '', player_id: '', assist_id: '', off_id: '', notes: '' })
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
+  const [koTime, setKoTime] = useState('')
+  const [now, setNow] = useState(Date.now())
   const isManager = userRole === 'manager'
   const canLog = userRole === 'manager' || userRole === 'coach'
 
@@ -856,12 +879,38 @@ function MatchCentrePage({ club, userRole }) {
     return () => supabase.removeChannel(ch)
   }, [selected?.id, refresh])
 
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 20000); return () => clearInterval(t) }, [])
+  useEffect(() => { setKoTime(selected && nairobiTime(selected.match_date) !== '00:00' ? nairobiTime(selected.match_date) : '') }, [selected?.id, selected?.match_date])
+
   const choose = async (f) => { setSelected(f); setAction(null); setMsg(null); await loadEvents(f.id) }
   const setStatus = async (patch, ok) => {
     const { error } = await supabase.from('fixtures').update(patch).eq('id', selected.id)
     if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg(ok ? { kind: 'ok', text: ok } : null); await refresh(selected.id) }
   }
-  const startMatch = () => { if (confirm(`Start the match against ${selected.opponent} now?`)) setStatus({ status: 'live', minute: 1 }, 'Match started') }
+  const koUnset = selected ? nairobiTime(selected.match_date) === '00:00' : true
+  const koMs = selected ? new Date(selected.match_date).getTime() : 0
+  const windowState = koUnset ? 'unset' : now < koMs - 30 * 60000 ? 'early' : now > koMs + 4 * 3600000 ? 'late' : 'ok'
+  const liveMinute = selected?.status === 'live' ? (selected.started_at ? Math.max(1, Math.min(130, Math.floor((now - new Date(selected.started_at).getTime()) / 60000) + 1)) : (selected.minute || 1)) : null
+
+  const saveKickoff = async () => {
+    if (!/^\d{2}:\d{2}$/.test(koTime) || koTime === '00:00') { setMsg({ kind: 'error', text: 'Enter the kick-off time' }); return }
+    const iso = new Date(`${nairobiDate(selected.match_date)}T${koTime}:00+03:00`).toISOString()
+    await setStatus({ match_date: iso }, `Kick-off set to ${koTime}`)
+  }
+  const startMatch = async (force = false) => {
+    const text = force
+      ? `Start the match against ${selected.opponent} now, outside the normal kick-off window?`
+      : `Start the match against ${selected.opponent} now? The match clock starts at 1'.`
+    if (!confirm(text)) return
+    const { error } = await supabase.rpc('start_match', { p_fixture: selected.id, p_force: force })
+    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match started' }); await refresh(selected.id) }
+  }
+  const cancelStart = async () => {
+    const n = events.length
+    if (!confirm(`Cancel this match start? The match goes back to Upcoming${n ? ` and its ${n} logged event${n === 1 ? '' : 's'} will be deleted` : ''}. Use this only if the match was started by mistake.`)) return
+    const { error } = await supabase.rpc('cancel_match_start', { p_fixture: selected.id })
+    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match start cancelled. It is back to Upcoming.' }); setAction(null); await refresh(selected.id) }
+  }
   const endMatch = () => { if (confirm('End the match? You can still add or remove events afterwards.')) setStatus({ status: 'completed' }, 'Match ended') }
   const reopenMatch = () => { if (confirm('Put this match back to live?')) setStatus({ status: 'live' }, 'Match is live again') }
   const resetMatch = async () => {
@@ -870,7 +919,7 @@ function MatchCentrePage({ club, userRole }) {
     if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match reset to upcoming' }); setAction(null); await refresh(selected.id) }
   }
 
-  const openAction = (a) => { setAction(a); setMsg(null); setForm({ minute: selected.minute ? String(selected.minute) : '', player_id: '', assist_id: '', off_id: '', notes: '' }) }
+  const openAction = (a) => { setAction(a); setMsg(null); setForm({ minute: liveMinute ? String(liveMinute) : (selected.minute ? String(selected.minute) : ''), player_id: '', assist_id: '', off_id: '', notes: '' }) }
 
   const needsPlayer = (t) => ['goal', 'penalty', 'penalty_missed', 'yellow_card', 'red_card', 'substitution', 'injury'].includes(t)
   const playerLabel = (t) => t === 'substitution' ? 'Player coming ON' : t === 'own_goal' ? 'Player (optional)' : 'Player'
@@ -935,8 +984,10 @@ function MatchCentrePage({ club, userRole }) {
         <div><div className="page-title">Match centre</div><div className="page-sub">{selected ? `${club.short_name || 'BTB'} vs ${selected.opponent}` : 'No matches'}</div></div>
         {canLog && selected && (
           <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {st === 'upcoming' && <button className="btn btn-primary" onClick={startMatch}>▶ Start match</button>}
+            {st === 'upcoming' && windowState === 'ok' && <button className="btn btn-primary" onClick={() => startMatch(false)}>▶ Start match</button>}
+            {st === 'upcoming' && windowState !== 'ok' && isManager && windowState !== 'unset' && <button className="btn btn-ghost" onClick={() => startMatch(true)}>▶ Start anyway</button>}
             {st === 'live' && <button className="btn btn-danger" onClick={endMatch}>■ End match</button>}
+            {st === 'live' && <button className="btn btn-ghost" onClick={cancelStart}>Cancel start</button>}
             {st === 'completed' && <button className="btn btn-ghost" onClick={reopenMatch}>↩ Reopen</button>}
             {isManager && st !== 'upcoming' && <button className="btn btn-ghost" onClick={resetMatch}>Reset match</button>}
           </div>
@@ -964,12 +1015,28 @@ function MatchCentrePage({ club, userRole }) {
                 </div>
                 <div className="match-hero-teams">
                   <div className="match-hero-team"><div className="match-hero-team-name">{club.name}</div><div className="match-hero-team-sub">{selected.is_home ? 'Home' : 'Away'}</div></div>
-                  <div><div className="match-hero-score">{ours ?? 0} – {theirs ?? 0}</div><div className="match-hero-minute">{st === 'live' ? `${selected.minute || 1}'` : st.toUpperCase()}</div></div>
+                  <div><div className="match-hero-score">{ours ?? 0} – {theirs ?? 0}</div><div className="match-hero-minute">{st === 'live' ? `${liveMinute}'` : st.toUpperCase()}</div></div>
                   <div className="match-hero-team"><div className="match-hero-team-name">{selected.opponent}</div><div className="match-hero-team-sub">{selected.is_home ? 'Away' : 'Home'}</div></div>
                 </div>
               </div>
 
-              {canLog && st === 'upcoming' && <Note kind="info" style={{ marginBottom: 16 }}>Press <strong>Start match</strong> when the whistle blows. Events can be logged once the match is live.</Note>}
+              {canLog && st === 'upcoming' && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-hdr"><div className="card-title">Kick-off</div></div>
+                  <div className="card-body">
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div className="form-group" style={{ margin: 0 }}><label>Kick-off time ({fmtDate(selected.match_date)})</label><input type="time" value={koTime} onChange={e => setKoTime(e.target.value)} /></div>
+                      <button className="btn btn-ghost" onClick={saveKickoff}>{koUnset ? 'Set kick-off time' : 'Update time'}</button>
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10 }}>
+                      {windowState === 'unset' && 'Set the kick-off time first. The match can then be started from 30 minutes before kick-off.'}
+                      {windowState === 'early' && `Kick-off is at ${nairobiTime(selected.match_date)}. The match can be started from ${nairobiTime(koMs - 30 * 60000)}.${isManager ? ' As a manager you can use Start anyway.' : ''}`}
+                      {windowState === 'ok' && 'Ready. Press Start match when the whistle blows.'}
+                      {windowState === 'late' && `This match was due to kick off at ${nairobiTime(selected.match_date)}, more than 4 hours ago.${isManager ? ' Use Start anyway if it is really being played now.' : ' Ask a manager to start it.'}`}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {canLog && st !== 'upcoming' && (
                 <div className="card" style={{ marginBottom: 16 }}>
@@ -1767,7 +1834,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
             </div>
             <div className="form-grid">
               <Field label="Child's full name *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></Field>
-              <Field label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} /></Field>
+              <Field label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} />{c.date_of_birth && c.date_of_birth <= today && <div style={{ fontSize: 12, color: 'var(--btb-gold)', marginTop: 4 }}>Age group: <strong>{autoAgeGroup(c.date_of_birth)}</strong>{FORMAT_OF[autoAgeGroup(c.date_of_birth)] ? ` · ${FORMAT_OF[autoAgeGroup(c.date_of_birth)]} matches` : ''}</div>}</Field>
               <Field label="Nationality"><input value={c.nationality} onChange={e => setCv('nationality', e.target.value)} /></Field>
               <Field label="Preferred position *"><select value={c.position} onChange={e => setCv('position', e.target.value)}><option value="">Select</option>{['Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => <option key={p}>{p}</option>)}</select></Field>
               <Field label="Position detail"><input value={c.position_detail} onChange={e => setCv('position_detail', e.target.value)} placeholder="e.g. Right Wing" /></Field>
@@ -1834,7 +1901,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>ALTERNATIVE CONTACT</div>
             <Row l="Name" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><Row l="Phone" v={g.alt_contact_phone} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>CHILD</div>
-            <Row l="Name" v={c.full_name} /><Row l="Date of birth" v={c.date_of_birth} /><Row l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
+            <Row l="Name" v={c.full_name} /><Row l="Date of birth" v={c.date_of_birth} /><Row l="Age group" v={autoAgeGroup(c.date_of_birth)} /><Row l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
             <Row l="Training centre" v={centers.find(t => t.id === c.training_center_id)?.name} /><Row l="Lives at" v={c.home_address} /><Row l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
             <Row l="Medical" v={c.medical_conditions} /><Row l="Allergies" v={c.allergies} />
             <Row l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
@@ -1848,6 +1915,109 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
           : <button className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? 'Submitting...' : 'Submit for approval'}</button>}
       </div>
     </Modal>
+  )
+}
+
+function StaffPage({ club, profile }) {
+  const [staff, setStaff] = useState([])
+  const [invites, setInvites] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [form, setForm] = useState({ name: '', phone: '' })
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const [fresh, setFresh] = useState(null)
+
+  const load = useCallback(async () => {
+    const [{ data: s }, { data: i }] = await Promise.all([
+      supabase.from('profiles').select('*').eq('club_id', club.id).in('role', ['manager', 'coach']).order('role').order('full_name'),
+      supabase.from('staff_invites').select('*').eq('club_id', club.id).is('used_at', null).gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }),
+    ])
+    setStaff(s || []); setInvites(i || []); setLoading(false)
+  }, [club.id])
+  useEffect(() => { load() }, [load])
+
+  const shareText = (name, code) => `Hi ${name}, you have been added as a coach at ${club.name}. Open ${window.location.origin}, tap "Register here", tick "I'm a coach with an invite code", and enter this code: ${code}. Use your own email and a password. The code is valid for 14 days.`
+  const waLink = (name, phone, code) => {
+    let n = (phone || '').replace(/\D/g, '')
+    if (n.startsWith('0')) n = '254' + n.slice(1)
+    return `https://wa.me/${n}?text=${encodeURIComponent(shareText(name, code))}`
+  }
+
+  const invite = async () => {
+    if (form.name.trim().length < 2) { setMsg({ kind: 'error', text: 'Enter the coach\'s name' }); return }
+    setSaving(true); setMsg(null)
+    const { data, error } = await supabase.rpc('create_invite', { p_name: form.name.trim(), p_phone: form.phone.trim() || null })
+    setSaving(false)
+    if (error) { setMsg({ kind: 'error', text: error.message }); return }
+    setFresh({ name: form.name.trim(), phone: form.phone.trim(), code: data })
+    setForm({ name: '', phone: '' }); load()
+  }
+  const revoke = async (inv) => {
+    if (!confirm(`Cancel the invite for ${inv.full_name}?`)) return
+    const { error } = await supabase.from('staff_invites').delete().eq('id', inv.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else { if (fresh?.code === inv.code) setFresh(null); load() }
+  }
+  const toggle = async (p) => {
+    if (!confirm(p.is_active ? `Deactivate ${p.full_name}? They will no longer be able to use the app.` : `Reactivate ${p.full_name}?`)) return
+    const { error } = await supabase.from('profiles').update({ is_active: !p.is_active }).eq('id', p.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else load()
+  }
+  const copy = async (text) => { try { await navigator.clipboard.writeText(text); setMsg({ kind: 'ok', text: 'Copied' }) } catch { setMsg({ kind: 'warn', text: 'Could not copy. Select the text and copy it manually.' }) } }
+
+  if (loading) return <Spinner />
+
+  return (
+    <div className="page">
+      <div className="page-hdr"><div><div className="page-title">Coaches & staff</div><div className="page-sub">Give your coaches access to the app</div></div></div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-hdr"><div className="card-title">Invite a coach</div></div>
+        <div className="card-body">
+          <div className="form-grid">
+            <div className="form-group"><label>Coach's name *</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} maxLength={100} /></div>
+            <div className="form-group"><label>WhatsApp number</label><input type="tel" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="07XX XXX XXX" /></div>
+          </div>
+          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={invite} disabled={saving}>{saving ? 'Creating...' : 'Create invite code'}</button>
+          {fresh && (
+            <Note kind="ok" style={{ marginTop: 14 }}>
+              <div style={{ marginBottom: 6 }}>Invite for <strong>{fresh.name}</strong></div>
+              <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 1, marginBottom: 8 }}>{fresh.code}</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <a className="btn btn-primary btn-sm" href={waLink(fresh.name, fresh.phone, fresh.code)} target="_blank" rel="noreferrer">Send on WhatsApp</a>
+                <button className="btn btn-ghost btn-sm" onClick={() => copy(shareText(fresh.name, fresh.code))}>Copy message</button>
+              </div>
+            </Note>
+          )}
+        </div>
+      </div>
+
+      {invites.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hdr"><div className="card-title">Waiting to join</div></div>
+          {invites.map(i => (
+            <div key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+              <div style={{ flex: 1, minWidth: 160 }}><div style={{ fontWeight: 600, fontSize: 13 }}>{i.full_name}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{i.code} · expires {fmtDate(i.expires_at)}</div></div>
+              <a className="btn btn-ghost btn-sm" href={waLink(i.full_name, i.phone, i.code)} target="_blank" rel="noreferrer">WhatsApp</a>
+              <button className="btn btn-ghost btn-sm" onClick={() => revoke(i)}>Cancel</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-hdr"><div className="card-title">Team</div></div>
+        {staff.map(p => (
+          <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '0.5px solid var(--border)', opacity: p.is_active ? 1 : 0.55 }}>
+            <div className="avatar">{initials(p.full_name)}</div>
+            <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontWeight: 600, fontSize: 14 }}>{p.full_name}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{[p.email, p.phone].filter(Boolean).join(' · ')}</div></div>
+            <span className={`badge ${p.role === 'manager' ? 'badge-blue' : 'badge-gray'}`}>{p.role}</span>
+            {!p.is_active && <span className="badge badge-red">deactivated</span>}
+            {p.role === 'coach' && p.id !== profile.id && <button className="btn btn-ghost btn-sm" onClick={() => toggle(p)}>{p.is_active ? 'Deactivate' : 'Reactivate'}</button>}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -1975,14 +2145,14 @@ function ApprovalsPage({ club, profile, onChanged }) {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { supabase.from('training_centers').select('id,name').eq('club_id', club.id).eq('is_active', true).order('name').then(({ data }) => setCenters(data || [])) }, [club.id])
-  const optOf = (p) => ({ center: p.training_center_id || '', sponsored: false, note: '', ...(opts[p.id] || {}) })
+  const optOf = (p) => ({ center: p.training_center_id || '', sponsored: false, note: '', ageGroup: '', ...(opts[p.id] || {}) })
   const setOpt = (p, k, v) => setOpts(o => ({ ...o, [p.id]: { ...optOf(p), [k]: v } }))
 
   const approve = async (p) => {
     setBusy(p.id); setError('')
     const sq = squadNo[p.id]; const o = optOf(p)
     if (!o.center) { setBusy(''); setError('Choose a training centre first'); return }
-    const { error: err } = await supabase.rpc('approve_player', { p_player: p.id, p_squad_number: sq ? parseInt(sq) : null, p_center: o.center, p_sponsored: o.sponsored, p_note: o.note || null })
+    const { error: err } = await supabase.rpc('approve_player', { p_player: p.id, p_squad_number: sq ? parseInt(sq) : null, p_center: o.center, p_sponsored: o.sponsored, p_note: o.note || null, p_age_group: o.ageGroup || null })
     setBusy('')
     if (err) { setError(err.message.includes('duplicate') ? 'That squad number is already taken' : err.message); return }
     load(); onChanged && onChanged()
@@ -2018,7 +2188,7 @@ function ApprovalsPage({ club, profile, onChanged }) {
                   <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>{p.full_name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {p.date_of_birth ? `Born ${new Date(p.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })}` : 'No date of birth'}
+                      {p.date_of_birth ? `Born ${new Date(p.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })} · ${autoAgeGroup(p.date_of_birth)}` : 'No date of birth'}
                       {p.position ? ` · ${p.position}` : ''}{p.school_name ? ` · ${p.school_name}` : ''}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -2039,6 +2209,7 @@ function ApprovalsPage({ club, profile, onChanged }) {
                 ) : (
                   <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
                     <select value={optOf(p).center} onChange={e => setOpt(p, 'center', e.target.value)} style={{ minWidth: 180 }}><option value="">Training centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+                    <select value={optOf(p).ageGroup} onChange={e => setOpt(p, 'ageGroup', e.target.value)} title="Age group"><option value="">Age group: {autoAgeGroup(p.date_of_birth) || '—'} (auto)</option>{AGE_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}</select>
                     <input type="number" min="0" max="99" placeholder="Squad #" value={squadNo[p.id] || ''} onChange={e => setSquadNo(s => ({ ...s, [p.id]: e.target.value }))} style={{ width: 90 }} />
                     <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}><input type="checkbox" style={{ width: 'auto' }} checked={optOf(p).sponsored} onChange={e => setOpt(p, 'sponsored', e.target.checked)} /> Sponsored (waive fees)</label>
                     {optOf(p).sponsored && <input placeholder="Sponsor / note" value={optOf(p).note} onChange={e => setOpt(p, 'note', e.target.value)} style={{ minWidth: 150 }} />}
@@ -2063,6 +2234,8 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [profileError, setProfileError] = useState('')
+  const [retryCode, setRetryCode] = useState('')
+  const [codeInput, setCodeInput] = useState('')
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
@@ -2077,14 +2250,16 @@ function App() {
     if (session === undefined) return
     if (!session) { setLoading(false); return }
     async function loadProfile() {
+      setProfileError('')
       let { data: prof } = await supabase.from('profiles').select('*').eq('user_id', session.user.id).maybeSingle()
       if (!prof) {
-        // First sign-in after parent sign-up: create the parent profile from the sign-up details.
+        // First sign-in after sign-up: create the profile (parent, or coach when an invite code was given).
         const meta = session.user.user_metadata || {}
-        const { error: regErr } = await supabase.rpc('register_parent', { p_club_slug: CLUB_SLUG, p_full_name: meta.full_name || '', p_phone: meta.phone || null })
-        if (regErr) setProfileError(regErr.message)
+        const { error: regErr } = await supabase.rpc('register_account', { p_club_slug: CLUB_SLUG, p_full_name: meta.full_name || '', p_phone: meta.phone || null, p_code: retryCode || meta.invite_code || null })
+        if (regErr) setProfileError('We could not set up your account: ' + regErr.message)
         else ({ data: prof } = await supabase.from('profiles').select('*').eq('user_id', session.user.id).maybeSingle())
       }
+      if (prof && prof.is_active === false) { setProfileError('Your account has been deactivated. Please contact the academy.'); prof = null }
       if (prof) {
         setProfile(prof)
         const { data: cl } = await supabase.from('clubs').select('*').eq('id', prof.club_id).single()
@@ -2094,7 +2269,7 @@ function App() {
       setLoading(false)
     }
     loadProfile()
-  }, [session])
+  }, [session, retryCode])
 
   if (session === undefined || loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
@@ -2107,7 +2282,13 @@ function App() {
   if (!session) return <Login />
   if (!profile || !club) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
-      {profileError ? <Note kind="error" style={{ maxWidth: 360 }}>We could not set up your account: {profileError}</Note> : <><Spinner /><p style={{ color: 'var(--text-muted)' }}>Loading profile...</p></>}
+      {profileError ? <Note kind="error" style={{ maxWidth: 360 }}>{profileError}</Note> : <><Spinner /><p style={{ color: 'var(--text-muted)' }}>Loading profile...</p></>}
+      {profileError && profileError.includes('invite code') && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input value={codeInput} onChange={e => setCodeInput(e.target.value.toUpperCase())} placeholder="BTB-XXXXXXXX" />
+          <button className="btn btn-primary" onClick={() => { setLoading(true); setRetryCode(codeInput.trim()) }}>Try again</button>
+        </div>
+      )}
       <button className="btn btn-ghost" onClick={() => supabase.auth.signOut()}>Sign out</button>
     </div>
   )
@@ -2125,6 +2306,7 @@ function App() {
       { id: 'fees', label: 'Fees', icon: '💰' },
       { id: 'messages', label: 'Messages', icon: '💬' },
       { id: 'analytics', label: 'Analytics', icon: '📊' },
+      { id: 'staff', label: 'Coaches', icon: '🧑‍🏫' },
     ],
     coach: [
       { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
@@ -2153,6 +2335,7 @@ function App() {
     switch (page) {
       case 'dashboard': return <ManagerDashboard profile={profile} club={club} setPage={setPage} />
       case 'parent-dashboard': return <ParentDashboard profile={profile} club={club} setPage={setPage} />
+      case 'staff': return profile.role === 'manager' ? <StaffPage club={club} profile={profile} /> : null
       case 'approvals': return profile.role !== 'manager' ? null : <ApprovalsPage profile={profile} club={club} />
       case 'squad': return <SquadPage userRole={profile.role} club={club} />
       case 'fixtures': return <FixturesPage userRole={profile.role} club={club} />
