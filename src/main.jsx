@@ -155,7 +155,7 @@ function Login() {
             <>
               {coachMode && <div className="form-group" style={{ marginBottom: 12 }}><label>Invite code</label><input value={form.code} onChange={e => set('code', e.target.value.toUpperCase())} placeholder="BTB-XXXXXXXX" autoCapitalize="characters" /></div>}
               <div className="form-group" style={{ marginBottom: 12 }}>
-                <label>Your full name</label>
+                <label>Parent / guardian's full name</label>
                 <input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="Parent / guardian name" required maxLength={100} />
               </div>
               <div className="form-group" style={{ marginBottom: 12 }}>
@@ -496,7 +496,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
               </div>
             </div>
             <div className="form-grid">
-              <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>{isParent ? "Child's full name *" : 'Full name *'}</label><input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="e.g. John Kamau Mwangi" maxLength={100} /></div>
+              <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>{isParent ? "Player's full name *" : 'Player full name *'}</label><input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="e.g. John Kamau Mwangi" maxLength={100} /></div>
               <div className="form-group"><label>Date of birth{isParent ? ' *' : ''}</label><input type="date" max={new Date().toISOString().slice(0, 10)} value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} /></div>
               <div className="form-group"><label>Nationality</label><input value={form.nationality} onChange={e => set('nationality', e.target.value)} placeholder="e.g. Kenyan" /></div>
               {isParent && (
@@ -668,7 +668,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
         )}
         {tab === 'family' && player.links?.[0]?.parent && (() => { const pr = player.links[0].parent; return (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {[{ l: `Parent / guardian (${player.links[0].relationship})`, v: pr.full_name, full: true }, { l: 'Phone', v: [pr.phone, pr.alt_phone].filter(Boolean).join(' / ') }, { l: 'Email', v: pr.email }, { l: 'Lives at', v: pr.residence, full: true }, { l: 'Occupation', v: pr.occupation }, { l: 'Alternative contact', v: pr.alt_contact_name ? `${pr.alt_contact_name} (${pr.alt_contact_relationship})` : null }, { l: 'Alternative contact phone', v: pr.alt_contact_phone }].map(({ l, v, full }) => (
+            {[{ l: `Parent / guardian (${player.links[0].relationship})`, v: pr.full_name, full: true }, { l: 'Phone', v: [pr.phone, pr.alt_phone].filter(Boolean).join(' / ') }, { l: 'Email', v: pr.email }, { l: 'Lives at', v: pr.residence, full: true }, { l: 'Alternative contact', v: pr.alt_contact_name ? `${pr.alt_contact_name} (${pr.alt_contact_relationship})` : null }, { l: 'Alternative contact phone', v: pr.alt_contact_phone }].map(({ l, v, full }) => (
               <div key={l} style={{ gridColumn: full ? '1 / -1' : 'auto' }}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>) })()}
@@ -2138,9 +2138,8 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
 
         {step === 0 && (
           <div className="form-grid">
-            <FormField label="Your full name *" full><input value={g.full_name} onChange={e => setGv('full_name', e.target.value)} maxLength={100} /></FormField>
+            <FormField label="Parent / guardian's full name *" full><input value={g.full_name} onChange={e => setGv('full_name', e.target.value)} maxLength={100} /></FormField>
             <FormField label="Your relationship to the child *"><select value={relationship} onChange={e => setRelationship(e.target.value)}>{['mother', 'father', 'guardian', 'other'].map(r => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}</select></FormField>
-            <FormField label="Occupation"><input value={g.occupation} onChange={e => setGv('occupation', e.target.value)} /></FormField>
             <FormField label="Phone / WhatsApp *"><input type="tel" value={g.phone} onChange={e => setGv('phone', e.target.value)} placeholder="07XX XXX XXX" /></FormField>
             <FormField label="Second phone number"><input type="tel" value={g.alt_phone} onChange={e => setGv('alt_phone', e.target.value)} placeholder="Optional" /></FormField>
             <FormField label="Email"><input value={profile.email || ''} disabled /></FormField>
@@ -2152,7 +2151,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Someone we can reach if we cannot reach you, for example in an emergency during training or a match.</div>
             <div className="form-grid">
-              <FormField label="Full name *" full><input value={g.alt_contact_name} onChange={e => setGv('alt_contact_name', e.target.value)} maxLength={100} /></FormField>
+              <FormField label="Alternative contact's full name *" full><input value={g.alt_contact_name} onChange={e => setGv('alt_contact_name', e.target.value)} maxLength={100} /></FormField>
               <FormField label="Relationship to the child *"><input value={g.alt_contact_relationship} onChange={e => setGv('alt_contact_relationship', e.target.value)} placeholder="e.g. Aunt, Grandmother, Neighbour" /></FormField>
               <FormField label="Phone number *"><input type="tel" value={g.alt_contact_phone} onChange={e => setGv('alt_contact_phone', e.target.value)} placeholder="07XX XXX XXX" /></FormField>
             </div>
@@ -2171,7 +2170,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
               </div>
             </div>
             <div className="form-grid">
-              <FormField label="Child's full name *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></FormField>
+              <FormField label="Player's full name (the child) *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></FormField>
               <FormField label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} />{c.date_of_birth && c.date_of_birth <= today && <div style={{ fontSize: 12, color: 'var(--btb-gold)', marginTop: 4 }}>Age group: <strong>{autoAgeGroup(c.date_of_birth)}</strong>{FORMAT_OF[autoAgeGroup(c.date_of_birth)] ? ` · ${FORMAT_OF[autoAgeGroup(c.date_of_birth)]} matches` : ''}</div>}</FormField>
               <FormField label="Nationality"><input value={c.nationality} onChange={e => setCv('nationality', e.target.value)} /></FormField>
               <FormField label="Preferred position *"><select value={c.position} onChange={e => setCv('position', e.target.value)}><option value="">Select</option>{['Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => <option key={p}>{p}</option>)}</select></FormField>
@@ -2235,11 +2234,11 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Check everything before you submit. Use Back to change anything.</div>
             <Note kind="info" style={{ marginBottom: 8 }}>Fees: registration {fmtKES(club.registration_fee ?? 2500)} (includes two sets of kits) and {fmtKES(club.monthly_fee ?? 2500)} per month for training. The academy will confirm once your registration is approved.</Note>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '8px 0 2px' }}>PARENT / GUARDIAN</div>
-            <SummaryRow l="Name" v={`${g.full_name} (${relationship})`} /><SummaryRow l="Phone" v={[g.phone, g.alt_phone].filter(Boolean).join(' / ')} /><SummaryRow l="Lives at" v={g.residence} />
+            <SummaryRow l="Parent / guardian" v={`${g.full_name} (${relationship})`} /><SummaryRow l="Phone" v={[g.phone, g.alt_phone].filter(Boolean).join(' / ')} /><SummaryRow l="Lives at" v={g.residence} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>ALTERNATIVE CONTACT</div>
-            <SummaryRow l="Name" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><SummaryRow l="Phone" v={g.alt_contact_phone} />
+            <SummaryRow l="Alternative contact" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><SummaryRow l="Phone" v={g.alt_contact_phone} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>CHILD</div>
-            <SummaryRow l="Name" v={c.full_name} /><SummaryRow l="Date of birth" v={c.date_of_birth} /><SummaryRow l="Age group" v={autoAgeGroup(c.date_of_birth)} /><SummaryRow l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
+            <SummaryRow l="Player" v={c.full_name} /><SummaryRow l="Date of birth" v={c.date_of_birth} /><SummaryRow l="Age group" v={autoAgeGroup(c.date_of_birth)} /><SummaryRow l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
             <SummaryRow l="Training centre" v={centers.find(t => t.id === c.training_center_id)?.name} /><SummaryRow l="Lives at" v={c.home_address} /><SummaryRow l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
             <SummaryRow l="Medical" v={c.medical_conditions} /><SummaryRow l="Allergies" v={c.allergies} />
             <SummaryRow l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
