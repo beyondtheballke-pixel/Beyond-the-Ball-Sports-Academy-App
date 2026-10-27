@@ -530,6 +530,8 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Home address</label><textarea value={form.home_address} onChange={e => set('home_address', e.target.value)} placeholder="Estate / village, town" /></div>
           </div>
         )}
+        {tab === 'attendance' && <PlayerAttendance player={player} />}
+        {tab === 'media' && <PlayerMedia player={player} club={club} canEdit={isStaff} />}
         {tab === 'documents' && (
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>PDF, JPG or PNG, up to 5 MB each. Documents are stored privately and only the academy and you can open them.</div>
@@ -646,7 +648,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
           </div>
         )}
         <div className="tabs no-scroll">
-          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : [])].map(t => (
+          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : []), ...((isStaff || isParent) && player.status === 'active' ? [{ k: 'attendance', l: 'Attendance' }, { k: 'media', l: 'Media' }] : [])].map(t => (
             <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.l}</button>
           ))}
         </div>
@@ -1090,11 +1092,343 @@ function MatchCentrePage({ club, userRole }) {
   )
 }
 
-function TrainingPage({ club, userRole }) {
+const waNumber = (phone) => { let n = String(phone || '').replace(/\D/g, ''); if (n.startsWith('0')) n = '254' + n.slice(1); return n }
+const waChat = (phone, text) => `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(text || '')}`
+const waShare = (text) => `https://wa.me/?text=${encodeURIComponent(text)}`
+const ABSENCE_REASONS = [['sick', 'Sick / unwell'], ['school', 'School commitment'], ['family', 'Family matter'], ['travel', 'Travelling'], ['injury', 'Injury'], ['other', 'Other']]
+const ATT_STATUS = [['present', 'Present', 'var(--green)'], ['late', 'Late', 'var(--amber)'], ['absent', 'Absent', 'var(--red)'], ['excused', 'Excused', 'var(--btb-gold)']]
+
+function AttendanceModal({ club, profile, session, onClose, onSaved }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [allCentres, setAllCentres] = useState(false)
+  const day = nairobiDate(session.session_date)
+
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true)
+      let pq = supabase.from('players').select('id,full_name,squad_number,date_of_birth,age_group_override,training_center_id').eq('club_id', club.id).eq('is_active', true).eq('status', 'active')
+      if (session.training_center_id && !allCentres) pq = pq.eq('training_center_id', session.training_center_id)
+      const [{ data: pl }, { data: att }, { data: abs }] = await Promise.all([
+        pq.order('full_name'),
+        supabase.from('training_attendance').select('player_id,status,notes').eq('session_id', session.id),
+        supabase.from('absence_reports').select('player_id,reason_type,reason').eq('club_id', club.id).lte('date_from', day).gte('date_to', day),
+      ])
+      const attMap = Object.fromEntries((att || []).map(a => [a.player_id, a]))
+      const absMap = Object.fromEntries((abs || []).map(a => [a.player_id, a]))
+      setRows((pl || []).map(p => ({ ...p, status: attMap[p.id]?.status || (absMap[p.id] ? 'excused' : null), saved: !!attMap[p.id], reported: absMap[p.id] || null })))
+      setLoading(false)
+    }
+    load()
+  }, [club.id, session.id, session.training_center_id, allCentres, day])
+
+  const setStatus = (id, status) => setRows(r => r.map(p => p.id === id ? { ...p, status: p.status === status ? null : status } : p))
+  const markRemaining = (status) => setRows(r => r.map(p => p.status ? p : { ...p, status }))
+  const counts = Object.fromEntries(ATT_STATUS.map(([k]) => [k, rows.filter(p => p.status === k).length]))
+  const unmarked = rows.filter(p => !p.status).length
+
+  const save = async () => {
+    const payload = rows.filter(p => p.status).map(p => ({ session_id: session.id, player_id: p.id, club_id: club.id, status: p.status, marked_by: profile.id, updated_at: new Date().toISOString() }))
+    if (payload.length === 0) { setError('Mark at least one player'); return }
+    setSaving(true); setError('')
+    const { error: err } = await supabase.from('training_attendance').upsert(payload, { onConflict: 'session_id,player_id' })
+    setSaving(false)
+    if (err) { setError(err.message); return }
+    onSaved()
+  }
+
+  return (
+    <Modal title={`Attendance · ${session.title.replace('Training · ', '')}`} onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{fmtDateTime(session.session_date)} · {session.venue || 'Venue not set'}</div>
+        {error && <Note kind="error" style={{ marginBottom: 10 }}>{error}</Note>}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
+          <button className="btn btn-ghost btn-sm" onClick={() => markRemaining('present')}>All remaining present</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => markRemaining('absent')}>All remaining absent</button>
+          {session.training_center_id && <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={allCentres} onChange={e => setAllCentres(e.target.checked)} /> Show other centres too</label>}
+        </div>
+        <div style={{ fontSize: 12, marginBottom: 10 }}>{ATT_STATUS.map(([k, l]) => `${counts[k]} ${l.toLowerCase()}`).join(' · ')} · {unmarked} not marked</div>
+        {loading ? <Spinner /> : rows.length === 0 ? <div className="empty"><div className="empty-sub">No active players at this centre yet</div></div> : (
+          <div style={{ maxHeight: 420, overflowY: 'auto' }}>
+            {rows.map(p => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px', borderBottom: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 150 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>
+                  {p.reported && <div style={{ fontSize: 11, color: 'var(--btb-gold)' }}>Parent reported absence: {ABSENCE_REASONS.find(r => r[0] === p.reported.reason_type)?.[1]}{p.reported.reason ? ` · ${p.reported.reason}` : ''}</div>}
+                </div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {ATT_STATUS.map(([k, l, col]) => <button key={k} onClick={() => setStatus(p.id, k)} className="btn btn-sm" style={{ background: p.status === k ? col : 'transparent', color: p.status === k ? '#000' : 'var(--text-muted)', border: `0.5px solid ${p.status === k ? col : 'var(--border)'}`, padding: '4px 8px', fontSize: 11 }}>{l}</button>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : 'Save attendance'}</button>
+      </div>
+    </Modal>
+  )
+}
+
+function PlayerAttendance({ player }) {
+  const [rows, setRows] = useState(null)
+  useEffect(() => {
+    supabase.from('training_attendance').select('status, session:training_sessions(title,session_date)').eq('player_id', player.id).then(({ data }) => {
+      setRows((data || []).filter(r => r.session).sort((a, b) => new Date(b.session.session_date) - new Date(a.session.session_date)))
+    })
+  }, [player.id])
+  if (!rows) return <Spinner />
+  const counted = rows.filter(r => r.status !== 'excused')
+  const attended = counted.filter(r => r.status === 'present' || r.status === 'late').length
+  const pct = counted.length ? Math.round(attended / counted.length * 100) : null
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, marginBottom: 14 }}>
+        {[{ l: 'Attendance', v: pct == null ? '—' : pct + '%' }, ...ATT_STATUS.filter(s => s[0] !== 'late').map(([k, l]) => ({ l, v: rows.filter(r => r.status === k).length }))].map(s => (
+          <div key={s.l} style={{ background: 'var(--bg-card2)', borderRadius: 8, padding: 10, textAlign: 'center', border: '0.5px solid var(--border)' }}><div style={{ fontSize: 18, fontWeight: 700, color: 'var(--btb-gold)' }}>{s.v}</div><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{s.l}</div></div>
+        ))}
+      </div>
+      {rows.length === 0 ? <div className="empty-sub">No attendance recorded yet</div> : rows.slice(0, 15).map((r, i) => (
+        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13 }}>
+          <span>{fmtDate(r.session.session_date)} · {r.session.title.replace('Training · ', '')}</span>
+          <span className={`badge ${STATUS_COLORS[r.status] || 'badge-gray'}`}>{r.status}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ReportAbsenceModal({ club, profile, kids, onClose, onSaved }) {
+  const today = nairobiDate(new Date())
+  const [form, setForm] = useState({ player_id: kids[0]?.id || '', date_from: today, date_to: today, reason_type: 'sick', reason: '' })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [done, setDone] = useState(null)
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const minDate = nairobiDate(Date.now() - 7 * 864e5)
+
+  const submit = async () => {
+    if (!form.player_id) { setError('Choose the child'); return }
+    if (form.date_from < minDate) { setError('You can report absences from the last 7 days onwards'); return }
+    if (form.date_to < form.date_from) { setError('The end date cannot be before the start date'); return }
+    if (form.reason_type === 'other' && form.reason.trim().length < 3) { setError('Please tell us the reason'); return }
+    setSaving(true); setError('')
+    const { error: err } = await supabase.from('absence_reports').insert({ club_id: club.id, player_id: form.player_id, reported_by: profile.id, date_from: form.date_from, date_to: form.date_to, reason_type: form.reason_type, reason: form.reason.trim() || null })
+    setSaving(false)
+    if (err) { setError(err.message); return }
+    const kid = kids.find(k => k.id === form.player_id)
+    const label = ABSENCE_REASONS.find(r => r[0] === form.reason_type)[1]
+    setDone({ text: `Hello, this is ${profile.full_name}. ${kid.full_name} will be absent from ${fmtDate(form.date_from)}${form.date_to !== form.date_from ? ' to ' + fmtDate(form.date_to) : ''}. Reason: ${label}${form.reason.trim() ? ' - ' + form.reason.trim() : ''}.` })
+  }
+
+  if (done) return (
+    <Modal title="Absence reported" onClose={onSaved}>
+      <div className="modal-body">
+        <Note kind="ok" style={{ marginBottom: 12 }}>The academy has been told. Coaches will see this when they take attendance.</Note>
+        {club.whatsapp_number && <a className="btn btn-ghost" href={waChat(club.whatsapp_number, done.text)} target="_blank" rel="noreferrer">Also message the academy on WhatsApp</a>}
+      </div>
+      <div className="modal-footer"><button className="btn btn-primary" onClick={onSaved}>Done</button></div>
+    </Modal>
+  )
+
+  return (
+    <Modal title="Report an absence" onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="form-grid">
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Child *</label><select value={form.player_id} onChange={e => set('player_id', e.target.value)}>{kids.map(k => <option key={k.id} value={k.id}>{k.full_name}</option>)}</select></div>
+          <div className="form-group"><label>From *</label><input type="date" min={minDate} value={form.date_from} onChange={e => { set('date_from', e.target.value); if (form.date_to < e.target.value) set('date_to', e.target.value) }} /></div>
+          <div className="form-group"><label>Until *</label><input type="date" min={form.date_from} value={form.date_to} onChange={e => set('date_to', e.target.value)} /></div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Reason *</label><select value={form.reason_type} onChange={e => set('reason_type', e.target.value)}>{ABSENCE_REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Details{form.reason_type === 'other' ? ' *' : ' (optional)'}</label><textarea rows={3} maxLength={500} value={form.reason} onChange={e => set('reason', e.target.value)} placeholder="Anything the coaches should know" /></div>
+        </div>
+      </div>
+      <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={submit} disabled={saving}>{saving ? 'Sending...' : 'Report absence'}</button>
+      </div>
+    </Modal>
+  )
+}
+
+function AbsencesPage({ club, profile }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [view, setView] = useState('upcoming')
+  const [msg, setMsg] = useState(null)
+  const today = nairobiDate(new Date())
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('absence_reports')
+      .select('*, player:players(full_name), reporter:profiles!absence_reports_reported_by_fkey(full_name,phone)')
+      .eq('club_id', club.id).order('date_from', { ascending: true })
+    if (error) setMsg({ kind: 'error', text: error.message })
+    setRows(data || []); setLoading(false)
+  }, [club.id])
+  useEffect(() => { load() }, [load])
+
+  const ack = async (r) => {
+    const { error } = await supabase.from('absence_reports').update({ status: 'acknowledged', acknowledged_by: profile.id, acknowledged_at: new Date().toISOString() }).eq('id', r.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else load()
+  }
+
+  const shown = rows.filter(r => view === 'upcoming' ? r.date_to >= today : r.date_to < today)
+  if (view === 'past') shown.reverse()
+  if (loading) return <Spinner />
+
+  return (
+    <div className="page">
+      <div className="page-hdr"><div><div className="page-title">Absences</div><div className="page-sub">Reported by parents</div></div></div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+      <div className="filter-pills">{[['upcoming', 'Current & upcoming'], ['past', 'Past']].map(([k, l]) => <button key={k} className={`pill ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>{l}</button>)}</div>
+      {shown.length === 0 ? <div className="empty"><div className="empty-title">No absence reports</div></div> : shown.map(r => (
+        <div key={r.id} className="card" style={{ marginBottom: 10 }}>
+          <div className="card-body" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontWeight: 700 }}>{r.player?.full_name}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{fmtDate(r.date_from)}{r.date_to !== r.date_from ? ` – ${fmtDate(r.date_to)}` : ''} · {ABSENCE_REASONS.find(x => x[0] === r.reason_type)?.[1]}</div>
+              {r.reason && <div style={{ fontSize: 13, marginTop: 4 }}>{r.reason}</div>}
+              <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4 }}>Reported by {r.reporter?.full_name || 'parent'} · {timeAgo(r.created_at)}</div>
+            </div>
+            <span className={`badge ${r.status === 'acknowledged' ? 'badge-green' : 'badge-amber'}`}>{r.status === 'acknowledged' ? 'Seen' : 'New'}</span>
+            {r.reporter?.phone && <a className="btn btn-ghost btn-sm" href={waChat(r.reporter.phone, `Hello ${r.reporter.full_name}, thank you for letting us know that ${r.player?.full_name} will be absent. - ${club.name}`)} target="_blank" rel="noreferrer">WhatsApp</a>}
+            {r.status === 'reported' && <button className="btn btn-primary btn-sm" onClick={() => ack(r)}>Mark seen</button>}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Shrink big phone photos before upload so storage and loading stay light.
+async function shrinkImage(file, maxSide = 1600) {
+  try {
+    const bmp = await createImageBitmap(file)
+    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height))
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale)
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height)
+    const blob = await new Promise(res => c.toBlob(res, 'image/jpeg', 0.85))
+    return blob && blob.size < file.size ? new File([blob], file.name.replace(/\.\w+$/, '') + '.jpg', { type: 'image/jpeg' }) : file
+  } catch { return file }
+}
+
+function PlayerMedia({ player, club, profile, canEdit }) {
+  const [items, setItems] = useState(null)
+  const [urls, setUrls] = useState({})
+  const [open, setOpen] = useState(null)
+  const [title, setTitle] = useState('')
+  const [link, setLink] = useState({ title: '', url: '' })
+  const [busy, setBusy] = useState('')
+  const [msg, setMsg] = useState(null)
+  const BUCKET = 'sportspulse-media'
+
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('player_media').select('*').eq('player_id', player.id).order('created_at', { ascending: false })
+    setItems(data || [])
+    const paths = (data || []).filter(m => m.file_path).map(m => m.file_path)
+    if (paths.length) {
+      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrls(paths, 3600)
+      setUrls(Object.fromEntries((signed || []).filter(s => s.signedUrl).map(s => [s.path, s.signedUrl])))
+    }
+  }, [player.id])
+  useEffect(() => { load() }, [load])
+
+  const upload = async (e) => {
+    const files = Array.from(e.target.files || []); e.target.value = ''
+    if (!files.length) return
+    setMsg(null); let ok = 0; const bad = []
+    for (let i = 0; i < files.length; i++) {
+      setBusy(`Uploading ${i + 1} of ${files.length}...`)
+      let f = files[i]; const isVideo = f.type.startsWith('video/'); const isImage = f.type.startsWith('image/')
+      if (!isVideo && !isImage) { bad.push(`${f.name}: not a photo or video`); continue }
+      if (isVideo && f.size > 50 * 1024 * 1024) { bad.push(`${f.name}: video is over 50 MB (upload it to YouTube or Drive and add a link instead)`); continue }
+      if (isImage) { if (f.size > 15 * 1024 * 1024) { bad.push(`${f.name}: photo is too large`); continue } f = await shrinkImage(f) }
+      const ext = (f.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)
+      const path = `${player.id}/${Date.now()}-${i}.${ext}`
+      const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, f, { contentType: f.type })
+      if (upErr) { bad.push(`${f.name}: ${upErr.message}`); continue }
+      const { error: dbErr } = await supabase.from('player_media').insert({ club_id: club.id, player_id: player.id, kind: isVideo ? 'video' : 'photo', title: title.trim() || null, file_path: path, uploaded_by: profile?.id || null })
+      if (dbErr) { bad.push(`${f.name}: ${dbErr.message}`); await supabase.storage.from(BUCKET).remove([path]); continue }
+      ok++
+    }
+    setBusy(''); setTitle('')
+    setMsg(bad.length ? { kind: 'warn', text: `${ok} uploaded. Problems: ${bad.join('; ')}` } : { kind: 'ok', text: `${ok} file${ok === 1 ? '' : 's'} uploaded` })
+    load()
+  }
+
+  const addLink = async () => {
+    if (!/^https:\/\/\S+$/i.test(link.url.trim())) { setMsg({ kind: 'error', text: 'Paste a full link starting with https://' }); return }
+    setBusy('Saving link...')
+    const { error } = await supabase.from('player_media').insert({ club_id: club.id, player_id: player.id, kind: 'link', title: link.title.trim() || 'Highlights', external_url: link.url.trim(), uploaded_by: profile?.id || null })
+    setBusy('')
+    if (error) setMsg({ kind: 'error', text: error.message }); else { setLink({ title: '', url: '' }); setMsg({ kind: 'ok', text: 'Link added' }); load() }
+  }
+
+  const remove = async (m) => {
+    if (!confirm('Delete this item? This cannot be undone.')) return
+    if (m.file_path) await supabase.storage.from(BUCKET).remove([m.file_path])
+    const { error } = await supabase.from('player_media').delete().eq('id', m.id)
+    if (error) setMsg({ kind: 'error', text: error.message }); else { setOpen(null); load() }
+  }
+
+  if (!items) return <Spinner />
+
+  return (
+    <div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 10 }}>{msg.text}</Note>}
+      {canEdit && (
+        <div style={{ background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input placeholder="Title (optional)" value={title} onChange={e => setTitle(e.target.value)} maxLength={120} style={{ flex: 1, minWidth: 140 }} />
+            <label className="btn btn-primary btn-sm" style={{ cursor: 'pointer' }}>{busy.startsWith('Uploading') ? busy : '+ Photos / videos'}<input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={upload} disabled={!!busy} /></label>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', margin: '6px 0 10px' }}>Photos are resized automatically. Videos up to 50 MB. For longer highlights add a YouTube or Drive link below.</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input placeholder="Link title" value={link.title} onChange={e => setLink(l => ({ ...l, title: e.target.value }))} style={{ width: 140 }} />
+            <input placeholder="https://youtu.be/..." value={link.url} onChange={e => setLink(l => ({ ...l, url: e.target.value }))} style={{ flex: 1, minWidth: 160 }} />
+            <button className="btn btn-ghost btn-sm" onClick={addLink} disabled={!!busy}>Add link</button>
+          </div>
+        </div>
+      )}
+      {items.length === 0 ? <div className="empty"><div className="empty-sub">No photos or highlights yet</div></div> : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
+          {items.map(m => (
+            <div key={m.id} onClick={() => setOpen(m)} style={{ position: 'relative', aspectRatio: '1', background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 8, overflow: 'hidden', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {m.kind === 'photo' && urls[m.file_path] && <img src={urls[m.file_path]} alt={m.title || ''} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+              {m.kind === 'video' && <><video src={urls[m.file_path] ? urls[m.file_path] + '#t=0.5' : undefined} preload="metadata" muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} /><span style={{ position: 'absolute', fontSize: 28, textShadow: '0 0 6px #000' }}>▶</span></>}
+              {m.kind === 'link' && <div style={{ textAlign: 'center', padding: 8 }}><div style={{ fontSize: 26 }}>🔗</div><div style={{ fontSize: 11, marginTop: 4 }}>{m.title}</div></div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {open && (
+        <Modal title={open.title || (open.kind === 'link' ? 'Highlights' : open.kind === 'video' ? 'Video' : 'Photo')} onClose={() => setOpen(null)} size="modal-lg">
+          <div className="modal-body" style={{ textAlign: 'center' }}>
+            {open.kind === 'photo' && <img src={urls[open.file_path]} alt={open.title || ''} style={{ maxWidth: '100%', maxHeight: '65vh', borderRadius: 8 }} />}
+            {open.kind === 'video' && <video src={urls[open.file_path]} controls playsInline style={{ maxWidth: '100%', maxHeight: '65vh', borderRadius: 8 }} />}
+            {open.kind === 'link' && <a className="btn btn-primary" href={open.external_url} target="_blank" rel="noopener noreferrer">Open link ↗</a>}
+            {open.caption && <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>{open.caption}</p>}
+            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 8 }}>Added {fmtDate(open.created_at)}</div>
+            {canEdit && <div style={{ marginTop: 12 }}><button className="btn btn-ghost btn-sm" onClick={() => remove(open)}>Delete</button></div>}
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+function TrainingPage({ club, userRole, profile }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [view, setView] = useState('upcoming')
+  const [attSession, setAttSession] = useState(null)
+  const [attMsg, setAttMsg] = useState('')
+  const isStaffT = userRole === 'manager' || userRole === 'coach'
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('training_sessions').select('*').eq('club_id', club.id).order('session_date', { ascending: true })
@@ -1123,7 +1457,7 @@ function TrainingPage({ club, userRole }) {
           <div className="card">
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Date</th><th>Session</th><th>Type</th><th>Duration</th><th>Venue</th></tr></thead>
+                <thead><tr><th>Date</th><th>Session</th><th>Type</th><th>Duration</th><th>Venue</th>{isStaffT && <th></th>}</tr></thead>
                 <tbody>
                   {shownSessions.map(s => (
                     <tr key={s.id}>
@@ -1132,6 +1466,7 @@ function TrainingPage({ club, userRole }) {
                       <td><span className="badge badge-blue">{s.session_type}</span></td>
                       <td>{s.duration_mins ? `${s.duration_mins} min` : '—'}</td>
                       <td>{s.venue || '—'}</td>
+                      {isStaffT && <td><button className="btn btn-ghost btn-sm" onClick={() => setAttSession(s)}>Attendance</button></td>}
                     </tr>
                   ))}
                 </tbody>
@@ -1139,6 +1474,8 @@ function TrainingPage({ club, userRole }) {
             </div>
           </div>
         )}
+      {attMsg && <Note kind="ok" style={{ marginTop: 12 }}>{attMsg}</Note>}
+      {attSession && <AttendanceModal club={club} profile={profile} session={attSession} onClose={() => setAttSession(null)} onSaved={() => { setAttSession(null); setAttMsg('Attendance saved'); setTimeout(() => setAttMsg(''), 4000) }} />}
       {showAdd && <AddTrainingModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
     </div>
   )
@@ -1926,6 +2263,14 @@ function StaffPage({ club, profile }) {
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState(null)
   const [fresh, setFresh] = useState(null)
+  const [groupUrl, setGroupUrl] = useState(club.whatsapp_group_url || '')
+  const [groupMsg, setGroupMsg] = useState(null)
+  const saveGroup = async () => {
+    const v = groupUrl.trim()
+    if (v && !/^https:\/\/chat\.whatsapp\.com\/\S+$/i.test(v)) { setGroupMsg({ kind: 'error', text: 'Paste the invite link, which starts with https://chat.whatsapp.com/' }); return }
+    const { error } = await supabase.from('clubs').update({ whatsapp_group_url: v || null }).eq('id', club.id)
+    if (error) setGroupMsg({ kind: 'error', text: error.message }); else { club.whatsapp_group_url = v || null; setGroupMsg({ kind: 'ok', text: v ? 'Saved. Parents now see a Join WhatsApp button.' : 'Group link removed.' }) }
+  }
 
   const load = useCallback(async () => {
     const [{ data: s }, { data: i }] = await Promise.all([
@@ -1970,6 +2315,15 @@ function StaffPage({ club, profile }) {
     <div className="page">
       <div className="page-hdr"><div><div className="page-title">Coaches & staff</div><div className="page-sub">Give your coaches access to the app</div></div></div>
       {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-hdr"><div className="card-title">Team WhatsApp group</div></div>
+        <div className="card-body">
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>In WhatsApp open the group, then Group info, then Invite via link, and copy the link here.</div>
+          {groupMsg && <Note kind={groupMsg.kind} style={{ marginBottom: 8 }}>{groupMsg.text}</Note>}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><input style={{ flex: 1, minWidth: 220 }} placeholder="https://chat.whatsapp.com/..." value={groupUrl} onChange={e => setGroupUrl(e.target.value)} /><button className="btn btn-primary" onClick={saveGroup}>Save</button></div>
+        </div>
+      </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-hdr"><div className="card-title">Invite a coach</div></div>
@@ -2029,14 +2383,18 @@ function ParentDashboard({ club, profile, setPage }) {
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(null)
   const [me, setMe] = useState(profile)
+  const [showAbs, setShowAbs] = useState(false)
+  const [absences, setAbsences] = useState([])
 
   const load = useCallback(async () => {
-    const [{ data: links }, { data: f }, { data: fx }, { data: fresh }] = await Promise.all([
+    const [{ data: links }, { data: f }, { data: fx }, { data: fresh }, { data: ab }] = await Promise.all([
       supabase.from('parent_player_links').select('relationship, player:players(*)').eq('parent_profile_id', profile.id),
       supabase.from('fees').select('*, player:players(full_name)').order('due_date', { ascending: true }),
       supabase.from('fixtures').select('*').eq('club_id', club.id).eq('status', 'upcoming').order('match_date', { ascending: true }).limit(3),
       supabase.from('profiles').select('*').eq('id', profile.id).maybeSingle(),
+      supabase.from('absence_reports').select('*, player:players(full_name)').eq('reported_by', profile.id).gte('date_to', nairobiDate(new Date())).order('date_from'),
     ])
+    setAbsences(ab || [])
     if (fresh) setMe(fresh)
     setChildren((links || []).map(l => ({ ...l.player, relationship: l.relationship })).filter(p => p && p.id))
     setFees(f || [])
@@ -2056,7 +2414,11 @@ function ParentDashboard({ club, profile, setPage }) {
     <div className="page">
       <div className="page-hdr">
         <div><div className="page-title">Hello, {profile.full_name.split(' ')[0]}</div><div className="page-sub">{club.name} · Parent portal</div></div>
-        <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add child</button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {club.whatsapp_group_url && <a className="btn btn-ghost" href={club.whatsapp_group_url} target="_blank" rel="noopener noreferrer">💬 Join team WhatsApp</a>}
+          {children.some(c => c.status === 'active') && <button className="btn btn-ghost" onClick={() => setShowAbs(true)}>Report absence</button>}
+          <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add child</button>
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -2078,6 +2440,19 @@ function ParentDashboard({ club, profile, setPage }) {
             </div>
           ))}
       </div>
+
+      {absences.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hdr"><div className="card-title">Reported absences</div></div>
+          {absences.map(a => (
+            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: '0.5px solid var(--border)', fontSize: 13 }}>
+              <div style={{ flex: 1 }}><strong>{a.player?.full_name?.split(' ')[0]}</strong> · {fmtDate(a.date_from)}{a.date_to !== a.date_from ? ` – ${fmtDate(a.date_to)}` : ''} · {ABSENCE_REASONS.find(r => r[0] === a.reason_type)?.[1]}</div>
+              <span className={`badge ${a.status === 'acknowledged' ? 'badge-green' : 'badge-amber'}`}>{a.status === 'acknowledged' ? 'Seen' : 'Sent'}</span>
+              <button className="btn btn-ghost btn-sm" onClick={async () => { if (confirm('Cancel this absence report?')) { await supabase.from('absence_reports').delete().eq('id', a.id); load() } }}>Cancel</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
         <div className="card">
@@ -2115,6 +2490,7 @@ function ParentDashboard({ club, profile, setPage }) {
         </div>
       </div>
 
+      {showAbs && <ReportAbsenceModal club={club} profile={me} kids={children.filter(c => c.status === 'active')} onClose={() => setShowAbs(false)} onSaved={() => { setShowAbs(false); load() }} />}
       {showAdd && <ParentRegistrationWizard club={club} profile={me} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole="parent" onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
     </div>
@@ -2303,6 +2679,7 @@ function App() {
       { id: 'fixtures', label: 'Fixtures', icon: '📅' },
       { id: 'match-centre', label: 'Match Centre', icon: '⚽' },
       { id: 'training', label: 'Training', icon: '🏃' },
+      { id: 'absences', label: 'Absences', icon: '🤒' },
       { id: 'fees', label: 'Fees', icon: '💰' },
       { id: 'messages', label: 'Messages', icon: '💬' },
       { id: 'analytics', label: 'Analytics', icon: '📊' },
@@ -2314,6 +2691,7 @@ function App() {
       { id: 'fixtures', label: 'Fixtures', icon: '📅' },
       { id: 'match-centre', label: 'Match Centre', icon: '⚽' },
       { id: 'training', label: 'Training', icon: '🏃' },
+      { id: 'absences', label: 'Absences', icon: '🤒' },
       { id: 'messages', label: 'Messages', icon: '💬' },
     ],
     player: [
@@ -2340,7 +2718,8 @@ function App() {
       case 'squad': return <SquadPage userRole={profile.role} club={club} />
       case 'fixtures': return <FixturesPage userRole={profile.role} club={club} />
       case 'match-centre': return <MatchCentrePage club={club} userRole={profile.role} />
-      case 'training': return <TrainingPage userRole={profile.role} club={club} />
+      case 'training': return <TrainingPage userRole={profile.role} club={club} profile={profile} />
+      case 'absences': return profile.role === 'parent' ? null : <AbsencesPage club={club} profile={profile} />
       case 'fees': return profile.role === 'manager' ? <FeesPage club={club} /> : null
       case 'messages': return <MessagesPage profile={profile} clubId={club.id} />
       case 'analytics': return <AnalyticsPage clubId={club.id} />
