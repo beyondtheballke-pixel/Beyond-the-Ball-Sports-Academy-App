@@ -2017,6 +2017,9 @@ const REQUIRED_DOCS = ['birth_certificate', 'parent_id']
 const phoneOk = (v = '') => v.replace(/[^0-9]/g, '').length >= 9
 
 // Step-by-step registration for parents. Each step must be completed before the next opens.
+const FormField = ({ label, children, full }) => <div className="form-group" style={full ? { gridColumn: '1 / -1' } : undefined}><label>{label}</label>{children}</div>
+const SummaryRow = ({ l, v }) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13 }}><span style={{ color: 'var(--text-muted)' }}>{l}</span><span style={{ textAlign: 'right' }}>{v || '—'}</span></div>
+
 function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
   const [step, setStep] = useState(0)
   const [maxStep, setMaxStep] = useState(0)
@@ -2123,8 +2126,6 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     </Modal>
   )
 
-  const Field = ({ label, children, full }) => <div className="form-group" style={full ? { gridColumn: '1 / -1' } : undefined}><label>{label}</label>{children}</div>
-  const Row = ({ l, v }) => <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '6px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13 }}><span style={{ color: 'var(--text-muted)' }}>{l}</span><span style={{ textAlign: 'right' }}>{v || '—'}</span></div>
 
   return (
     <Modal title="Register your child" onClose={onClose} size="modal-lg">
@@ -2137,13 +2138,13 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
 
         {step === 0 && (
           <div className="form-grid">
-            <Field label="Your full name *" full><input value={g.full_name} onChange={e => setGv('full_name', e.target.value)} maxLength={100} /></Field>
-            <Field label="Your relationship to the child *"><select value={relationship} onChange={e => setRelationship(e.target.value)}>{['mother', 'father', 'guardian', 'other'].map(r => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}</select></Field>
-            <Field label="Occupation"><input value={g.occupation} onChange={e => setGv('occupation', e.target.value)} /></Field>
-            <Field label="Phone / WhatsApp *"><input type="tel" value={g.phone} onChange={e => setGv('phone', e.target.value)} placeholder="07XX XXX XXX" /></Field>
-            <Field label="Second phone number"><input type="tel" value={g.alt_phone} onChange={e => setGv('alt_phone', e.target.value)} placeholder="Optional" /></Field>
-            <Field label="Email"><input value={profile.email || ''} disabled /></Field>
-            <Field label="Where you live *" full><input value={g.residence} onChange={e => setGv('residence', e.target.value)} placeholder="Estate / village, town" /></Field>
+            <FormField label="Your full name *" full><input value={g.full_name} onChange={e => setGv('full_name', e.target.value)} maxLength={100} /></FormField>
+            <FormField label="Your relationship to the child *"><select value={relationship} onChange={e => setRelationship(e.target.value)}>{['mother', 'father', 'guardian', 'other'].map(r => <option key={r} value={r}>{r[0].toUpperCase() + r.slice(1)}</option>)}</select></FormField>
+            <FormField label="Occupation"><input value={g.occupation} onChange={e => setGv('occupation', e.target.value)} /></FormField>
+            <FormField label="Phone / WhatsApp *"><input type="tel" value={g.phone} onChange={e => setGv('phone', e.target.value)} placeholder="07XX XXX XXX" /></FormField>
+            <FormField label="Second phone number"><input type="tel" value={g.alt_phone} onChange={e => setGv('alt_phone', e.target.value)} placeholder="Optional" /></FormField>
+            <FormField label="Email"><input value={profile.email || ''} disabled /></FormField>
+            <FormField label="Where you live *" full><input value={g.residence} onChange={e => setGv('residence', e.target.value)} placeholder="Estate / village, town" /></FormField>
           </div>
         )}
 
@@ -2151,9 +2152,9 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Someone we can reach if we cannot reach you, for example in an emergency during training or a match.</div>
             <div className="form-grid">
-              <Field label="Full name *" full><input value={g.alt_contact_name} onChange={e => setGv('alt_contact_name', e.target.value)} maxLength={100} /></Field>
-              <Field label="Relationship to the child *"><input value={g.alt_contact_relationship} onChange={e => setGv('alt_contact_relationship', e.target.value)} placeholder="e.g. Aunt, Grandmother, Neighbour" /></Field>
-              <Field label="Phone number *"><input type="tel" value={g.alt_contact_phone} onChange={e => setGv('alt_contact_phone', e.target.value)} placeholder="07XX XXX XXX" /></Field>
+              <FormField label="Full name *" full><input value={g.alt_contact_name} onChange={e => setGv('alt_contact_name', e.target.value)} maxLength={100} /></FormField>
+              <FormField label="Relationship to the child *"><input value={g.alt_contact_relationship} onChange={e => setGv('alt_contact_relationship', e.target.value)} placeholder="e.g. Aunt, Grandmother, Neighbour" /></FormField>
+              <FormField label="Phone number *"><input type="tel" value={g.alt_contact_phone} onChange={e => setGv('alt_contact_phone', e.target.value)} placeholder="07XX XXX XXX" /></FormField>
             </div>
           </div>
         )}
@@ -2170,37 +2171,37 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
               </div>
             </div>
             <div className="form-grid">
-              <Field label="Child's full name *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></Field>
-              <Field label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} />{c.date_of_birth && c.date_of_birth <= today && <div style={{ fontSize: 12, color: 'var(--btb-gold)', marginTop: 4 }}>Age group: <strong>{autoAgeGroup(c.date_of_birth)}</strong>{FORMAT_OF[autoAgeGroup(c.date_of_birth)] ? ` · ${FORMAT_OF[autoAgeGroup(c.date_of_birth)]} matches` : ''}</div>}</Field>
-              <Field label="Nationality"><input value={c.nationality} onChange={e => setCv('nationality', e.target.value)} /></Field>
-              <Field label="Preferred position *"><select value={c.position} onChange={e => setCv('position', e.target.value)}><option value="">Select</option>{['Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => <option key={p}>{p}</option>)}</select></Field>
-              <Field label="Position detail"><input value={c.position_detail} onChange={e => setCv('position_detail', e.target.value)} placeholder="e.g. Right Wing" /></Field>
-              <Field label="Dominant foot"><select value={c.dominant_foot} onChange={e => setCv('dominant_foot', e.target.value)}>{['Right', 'Left', 'Both'].map(f => <option key={f}>{f}</option>)}</select></Field>
-              <Field label="Height (cm)"><input type="number" value={c.height_cm} onChange={e => setCv('height_cm', e.target.value)} /></Field>
-              <Field label="Weight (kg)"><input type="number" value={c.weight_kg} onChange={e => setCv('weight_kg', e.target.value)} /></Field>
+              <FormField label="Child's full name *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></FormField>
+              <FormField label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} />{c.date_of_birth && c.date_of_birth <= today && <div style={{ fontSize: 12, color: 'var(--btb-gold)', marginTop: 4 }}>Age group: <strong>{autoAgeGroup(c.date_of_birth)}</strong>{FORMAT_OF[autoAgeGroup(c.date_of_birth)] ? ` · ${FORMAT_OF[autoAgeGroup(c.date_of_birth)]} matches` : ''}</div>}</FormField>
+              <FormField label="Nationality"><input value={c.nationality} onChange={e => setCv('nationality', e.target.value)} /></FormField>
+              <FormField label="Preferred position *"><select value={c.position} onChange={e => setCv('position', e.target.value)}><option value="">Select</option>{['Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => <option key={p}>{p}</option>)}</select></FormField>
+              <FormField label="Position detail"><input value={c.position_detail} onChange={e => setCv('position_detail', e.target.value)} placeholder="e.g. Right Wing" /></FormField>
+              <FormField label="Dominant foot"><select value={c.dominant_foot} onChange={e => setCv('dominant_foot', e.target.value)}>{['Right', 'Left', 'Both'].map(f => <option key={f}>{f}</option>)}</select></FormField>
+              <FormField label="Height (cm)"><input type="number" value={c.height_cm} onChange={e => setCv('height_cm', e.target.value)} /></FormField>
+              <FormField label="Weight (kg)"><input type="number" value={c.weight_kg} onChange={e => setCv('weight_kg', e.target.value)} /></FormField>
             </div>
           </div>
         )}
 
         {step === 3 && (
           <div className="form-grid">
-            <Field label="Training centre *" full>
+            <FormField label="Training centre *" full>
               <select value={c.training_center_id} onChange={e => setCv('training_center_id', e.target.value)}><option value="">Select a centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
-            </Field>
-            <Field label="Where the child lives *" full>
+            </FormField>
+            <FormField label="Where the child lives *" full>
               <textarea value={c.home_address} onChange={e => setCv('home_address', e.target.value)} placeholder="Estate / village, town, landmark" />
               {g.residence && c.home_address !== g.residence && <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 6 }} onClick={() => setCv('home_address', g.residence)}>Same as my address</button>}
-            </Field>
-            <Field label="School *"><input value={c.school_name} onChange={e => setCv('school_name', e.target.value)} placeholder="e.g. Nyeri Primary School" /></Field>
-            <Field label="Grade / class"><input value={c.school_grade} onChange={e => setCv('school_grade', e.target.value)} placeholder="e.g. Grade 7" /></Field>
+            </FormField>
+            <FormField label="School *"><input value={c.school_name} onChange={e => setCv('school_name', e.target.value)} placeholder="e.g. Nyeri Primary School" /></FormField>
+            <FormField label="Grade / class"><input value={c.school_grade} onChange={e => setCv('school_grade', e.target.value)} placeholder="e.g. Grade 7" /></FormField>
           </div>
         )}
 
         {step === 4 && (
           <div>
             <div className="form-grid">
-              <Field label="Medical conditions" full><textarea value={c.medical_conditions} onChange={e => setCv('medical_conditions', e.target.value)} placeholder="Asthma, injuries, anything the coaches should know. Write 'None' if there is nothing." /></Field>
-              <Field label="Allergies" full><textarea value={c.allergies} onChange={e => setCv('allergies', e.target.value)} placeholder="Food, medicine or other allergies. Write 'None' if there are none." /></Field>
+              <FormField label="Medical conditions" full><textarea value={c.medical_conditions} onChange={e => setCv('medical_conditions', e.target.value)} placeholder="Asthma, injuries, anything the coaches should know. Write 'None' if there is nothing." /></FormField>
+              <FormField label="Allergies" full><textarea value={c.allergies} onChange={e => setCv('allergies', e.target.value)} placeholder="Food, medicine or other allergies. Write 'None' if there are none." /></FormField>
             </div>
             <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 16, background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 10, padding: 12, cursor: 'pointer' }}>
               <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)} style={{ width: 'auto', marginTop: 3 }} />
@@ -2234,14 +2235,14 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>Check everything before you submit. Use Back to change anything.</div>
             <Note kind="info" style={{ marginBottom: 8 }}>Fees: registration {fmtKES(club.registration_fee ?? 2500)} (includes two sets of kits) and {fmtKES(club.monthly_fee ?? 2500)} per month for training. The academy will confirm once your registration is approved.</Note>
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '8px 0 2px' }}>PARENT / GUARDIAN</div>
-            <Row l="Name" v={`${g.full_name} (${relationship})`} /><Row l="Phone" v={[g.phone, g.alt_phone].filter(Boolean).join(' / ')} /><Row l="Lives at" v={g.residence} />
+            <SummaryRow l="Name" v={`${g.full_name} (${relationship})`} /><SummaryRow l="Phone" v={[g.phone, g.alt_phone].filter(Boolean).join(' / ')} /><SummaryRow l="Lives at" v={g.residence} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>ALTERNATIVE CONTACT</div>
-            <Row l="Name" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><Row l="Phone" v={g.alt_contact_phone} />
+            <SummaryRow l="Name" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><SummaryRow l="Phone" v={g.alt_contact_phone} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>CHILD</div>
-            <Row l="Name" v={c.full_name} /><Row l="Date of birth" v={c.date_of_birth} /><Row l="Age group" v={autoAgeGroup(c.date_of_birth)} /><Row l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
-            <Row l="Training centre" v={centers.find(t => t.id === c.training_center_id)?.name} /><Row l="Lives at" v={c.home_address} /><Row l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
-            <Row l="Medical" v={c.medical_conditions} /><Row l="Allergies" v={c.allergies} />
-            <Row l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
+            <SummaryRow l="Name" v={c.full_name} /><SummaryRow l="Date of birth" v={c.date_of_birth} /><SummaryRow l="Age group" v={autoAgeGroup(c.date_of_birth)} /><SummaryRow l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
+            <SummaryRow l="Training centre" v={centers.find(t => t.id === c.training_center_id)?.name} /><SummaryRow l="Lives at" v={c.home_address} /><SummaryRow l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
+            <SummaryRow l="Medical" v={c.medical_conditions} /><SummaryRow l="Allergies" v={c.allergies} />
+            <SummaryRow l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
           </div>
         )}
       </div>
