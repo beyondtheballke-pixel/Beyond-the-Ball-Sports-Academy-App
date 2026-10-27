@@ -322,7 +322,7 @@ function SquadPage({ club, userRole }) {
   const filtered = players.filter(p => {
     const matchPos = filter === 'All' || p.position === filter
     const matchSearch = !search || p.full_name.toLowerCase().includes(search.toLowerCase())
-    const matchCenter = centerFilter === 'all' || p.training_center_id === centerFilter
+    const matchCenter = centerFilter === 'all' || p.training_center_id === centerFilter || p.attends_both
     const matchAge = ageFilter === 'all' || ageGroupOf(p) === ageFilter
     return matchPos && matchSearch && matchCenter && matchAge
   })
@@ -596,7 +596,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
     load()
   }, [player.id, loadDocs])
 
-  useEffect(() => { if (player.training_center_id) supabase.from('training_centers').select('name').eq('id', player.training_center_id).maybeSingle().then(({ data }) => setCenterName(data?.name || '')) }, [player.training_center_id])
+  useEffect(() => { if (player.training_center_id) supabase.from('training_centers').select('name').eq('id', player.training_center_id).maybeSingle().then(({ data }) => setCenterName(player.attends_both ? 'Both centres' : (data?.name || ''))) }, [player.training_center_id, player.attends_both])
 
   const addDoc = async (e) => {
     const file = e.target.files[0]; e.target.value = ''
@@ -1110,7 +1110,7 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
     const load = async () => {
       setLoading(true)
       let pq = supabase.from('players').select('id,full_name,squad_number,date_of_birth,age_group_override,training_center_id').eq('club_id', club.id).eq('is_active', true).eq('status', 'active')
-      if (session.training_center_id && !allCentres) pq = pq.eq('training_center_id', session.training_center_id)
+      if (session.training_center_id && !allCentres) pq = pq.or(`training_center_id.eq.${session.training_center_id},attends_both.eq.true`)
       const [{ data: pl }, { data: att }, { data: abs }] = await Promise.all([
         pq.order('full_name'),
         supabase.from('training_attendance').select('player_id,status,notes').eq('session_id', session.id),
@@ -1532,7 +1532,7 @@ function FeesPage({ club }) {
   const load = useCallback(async () => {
     const [{ data: f }, { data: p }, { data: c }] = await Promise.all([
       supabase.from('fees').select('*, player:players(full_name,squad_number,sponsored)').eq('club_id', club.id).order('created_at', { ascending: false }),
-      supabase.from('players').select('id,full_name,squad_number,sponsored,training_center_id').eq('club_id', club.id).eq('is_active', true).order('full_name'),
+      supabase.from('players').select('id,full_name,squad_number,sponsored,training_center_id,attends_both').eq('club_id', club.id).eq('is_active', true).order('full_name'),
       supabase.from('training_centers').select('*').eq('club_id', club.id).eq('is_active', true),
     ])
     setFees(f || []); setPlayers(p || []); setCenters(c || []); setLoading(false)
@@ -1687,7 +1687,7 @@ function AddFeeModal({ club, players, centers, onClose, onSaved }) {
     if (!form.description.trim() || !amt || amt <= 0) { setError('Description and a valid amount are required'); return }
     let targets = []
     if (form.target === 'player') { if (!form.player_id) { setError('Choose a player'); return } targets = players.filter(p => p.id === form.player_id) }
-    else if (form.target === 'center') { if (!form.center_id) { setError('Choose a training centre'); return } targets = players.filter(p => p.training_center_id === form.center_id) }
+    else if (form.target === 'center') { if (!form.center_id) { setError('Choose a training centre'); return } targets = players.filter(p => p.training_center_id === form.center_id || p.attends_both) }
     else targets = players
     if (form.target !== 'player' && form.skip_sponsored) targets = targets.filter(p => !p.sponsored)
     if (targets.length === 0) { setError('No players match this selection'); return }
@@ -2032,7 +2032,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     residence: profile.residence || '', occupation: profile.occupation || '',
     alt_contact_name: profile.alt_contact_name || '', alt_contact_relationship: profile.alt_contact_relationship || '', alt_contact_phone: profile.alt_contact_phone || '',
   })
-  const [c, setC] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', home_address: '', school_name: '', school_grade: '', medical_conditions: '', allergies: '', training_center_id: '' })
+  const [c, setC] = useState({ full_name: '', date_of_birth: '', nationality: 'Kenyan', position: '', position_detail: '', dominant_foot: 'Right', height_cm: '', weight_kg: '', home_address: '', school_name: '', school_grade: '', medical_conditions: '', allergies: '', training_center_id: '', attends_both: false })
   const [centers, setCenters] = useState([])
   const [consent, setConsent] = useState(false)
   const [photo, setPhoto] = useState(null)
@@ -2104,6 +2104,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     setSaving(true); setError('')
     const { data: playerId, error: err } = await supabase.rpc('register_child', { p: { ...c, consent: 'true' }, g, p_relationship: relationship })
     if (err) { setError(err.message); setSaving(false); return }
+    if (c.attends_both) await supabase.rpc('set_attends_both', { p_player: playerId, p_both: true })
     const problems = []
     if (photo) {
       const { url, error: pe } = await uploadPlayerPhoto({ playerId, file: photo })
@@ -2185,7 +2186,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
         {step === 3 && (
           <div className="form-grid">
             <FormField label="Training centre *" full>
-              <select value={c.training_center_id} onChange={e => setCv('training_center_id', e.target.value)}><option value="">Select a centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
+              <select value={c.attends_both ? 'both' : c.training_center_id} onChange={e => { const v = e.target.value; setC(x => ({ ...x, attends_both: v === 'both', training_center_id: v === 'both' ? (centers[0]?.id || '') : v })) }}><option value="">Select a centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}{centers.length > 1 && <option value="both">Both centres</option>}</select>
             </FormField>
             <FormField label="Where the child lives *" full>
               <textarea value={c.home_address} onChange={e => setCv('home_address', e.target.value)} placeholder="Estate / village, town, landmark" />
@@ -2239,7 +2240,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
             <SummaryRow l="Alternative contact" v={`${g.alt_contact_name} (${g.alt_contact_relationship})`} /><SummaryRow l="Phone" v={g.alt_contact_phone} />
             <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--btb-gold)', margin: '12px 0 2px' }}>CHILD</div>
             <SummaryRow l="Player" v={c.full_name} /><SummaryRow l="Date of birth" v={c.date_of_birth} /><SummaryRow l="Age group" v={autoAgeGroup(c.date_of_birth)} /><SummaryRow l="Position" v={c.position_detail ? `${c.position} (${c.position_detail})` : c.position} />
-            <SummaryRow l="Training centre" v={centers.find(t => t.id === c.training_center_id)?.name} /><SummaryRow l="Lives at" v={c.home_address} /><SummaryRow l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
+            <SummaryRow l="Training centre" v={c.attends_both ? 'Both centres' : centers.find(t => t.id === c.training_center_id)?.name} /><SummaryRow l="Lives at" v={c.home_address} /><SummaryRow l="School" v={[c.school_name, c.school_grade].filter(Boolean).join(', ')} />
             <SummaryRow l="Medical" v={c.medical_conditions} /><SummaryRow l="Allergies" v={c.allergies} />
             <SummaryRow l="Documents" v={docTypes.filter(d => files[d.key]).map(d => d.label).join(', ')} />
           </div>
