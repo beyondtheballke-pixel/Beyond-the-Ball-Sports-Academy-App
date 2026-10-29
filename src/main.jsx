@@ -148,7 +148,7 @@ function Note({ kind = 'info', children, style }) {
   return <div style={{ background: c[0], border: `0.5px solid ${c[1]}`, borderRadius: 8, padding: '10px 12px', fontSize: 13, color: 'var(--text)', lineHeight: 1.5, ...style }}>{children}</div>
 }
 
-const CLUB_SLUG = 'btb'
+const CLUB_SLUG = (import.meta.env && import.meta.env.VITE_CLUB_SLUG) || 'btb'
 
 function Login() {
   const [mode, setMode] = useState('signin')
@@ -760,14 +760,19 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
   )
 }
 
-function FixturesPage({ club, userRole }) {
+function FixturesPage({ club, userRole, profile: profileF }) {
   const [fixtures, setFixtures] = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [showAdd, setShowAdd] = useState(false)
+  const [squads, setSquads] = useState([])
+  const [squadFx, setSquadFx] = useState(null)
+  const isStaffF = userRole === 'manager' || userRole === 'coach'
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false })
+    const { data: sq } = await supabase.from('match_squad').select('fixture_id,role,player:players(full_name)').eq('club_id', club.id)
+    setSquads(sq || [])
     setFixtures(data || [])
     setLoading(false)
   }, [club.id])
@@ -788,7 +793,7 @@ function FixturesPage({ club, userRole }) {
   return (
     <div className="page">
       <div className="page-hdr">
-        <div><div className="page-title">Fixtures & Results</div><div className="page-sub">2024/25 season</div></div>
+        <div><div className="page-title">Fixtures & Results</div><div className="page-sub">Matches and results</div></div>
         {(userRole === 'manager' || userRole === 'coach') && (
           <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add fixture</button>
         )}
@@ -822,11 +827,15 @@ function FixturesPage({ club, userRole }) {
                     <div className="fixture-team away">{awayTeam}</div>
                   </div>
                   {f.venue && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>📍 {f.venue}</div>}
+                  {!isStaffF && squads.filter(x => x.fixture_id === f.id).map((x, i) => <div key={i} style={{ fontSize: 12, marginTop: 6, color: x.role === 'unavailable' ? 'var(--red)' : 'var(--green)' }}>⚽ {x.player?.full_name?.split(' ')[0]}: {x.role === 'starter' ? 'in the starting team' : x.role === 'sub' ? 'on the bench' : 'not available'}</div>)}
+                  {isStaffF && f.status !== 'completed' && <div style={{ marginTop: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setSquadFx(f)}>Squad ({squads.filter(x => x.fixture_id === f.id && x.role !== 'unavailable').length})</button></div>}
+                  {isStaffF && f.status === 'completed' && <div style={{ marginTop: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setSquadFx(f)}>Squad & notes</button></div>}
                 </div>
               )
             })}
           </div>
         )}
+      {squadFx && <MatchSquadModal club={club} fixture={squadFx} profile={profileF} onClose={() => setSquadFx(null)} onSaved={() => { setSquadFx(null); load() }} />}
       {showAdd && <AddFixtureModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
     </div>
   )
@@ -1194,6 +1203,11 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
     setSaving(true); setError('')
     const { error: err } = await supabase.from('training_attendance').upsert(payload, { onConflict: 'session_id,player_id' })
     setSaving(false)
+    if (err && isNetworkError(err.message)) {
+      try { const q = JSON.parse(localStorage.getItem('sp-att-queue') || '[]'); q.push(payload); localStorage.setItem('sp-att-queue', JSON.stringify(q)) } catch {}
+      onSaved('No signal. Attendance is saved on this phone and will send by itself when you are back online.')
+      return
+    }
     if (err) { setError(friendly(err.message)); return }
     onSaved()
   }
@@ -1204,7 +1218,7 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{fmtDateTime(session.session_date)} · {session.venue || 'Venue not set'}</div>
         {error && <Note kind="error" style={{ marginBottom: 10 }}>{error}</Note>}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
-          <button className="btn btn-ghost btn-sm" onClick={() => markRemaining('present')}>All remaining present</button>
+          <button className="btn btn-primary btn-sm" onClick={() => markRemaining('present')}>Everyone else present</button><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Tap a name to switch present / absent</span>
           <button className="btn btn-ghost btn-sm" onClick={() => markRemaining('absent')}>All remaining absent</button>
           {session.training_center_id && <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={allCentres} onChange={e => setAllCentres(e.target.checked)} /> Show other centres too</label>}
         </div>
@@ -1213,12 +1227,12 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
           <div style={{ maxHeight: 420, overflowY: 'auto' }}>
             {rows.map(p => (
               <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px', borderBottom: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 150 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>
+                <div style={{ flex: 1, minWidth: 150, cursor: 'pointer', padding: '6px 0' }} onClick={() => setRows(r => r.map(x => x.id === p.id ? { ...x, status: x.status === 'present' ? 'absent' : 'present' } : x))}>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>
                   {p.reported && <div style={{ fontSize: 11, color: 'var(--btb-gold)' }}>Parent reported absence: {ABSENCE_REASONS.find(r => r[0] === p.reported.reason_type)?.[1]}{p.reported.reason ? ` · ${p.reported.reason}` : ''}</div>}
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
-                  {ATT_STATUS.map(([k, l, col]) => <button key={k} onClick={() => setStatus(p.id, k)} className="btn btn-sm" style={{ background: p.status === k ? col : 'transparent', color: p.status === k ? '#000' : 'var(--text-muted)', border: `0.5px solid ${p.status === k ? col : 'var(--border)'}`, padding: '4px 8px', fontSize: 11 }}>{l}</button>)}
+                  {ATT_STATUS.map(([k, l, col]) => <button key={k} onClick={() => setStatus(p.id, k)} className="btn btn-sm" style={{ background: p.status === k ? col : 'transparent', color: p.status === k ? '#000' : 'var(--text-muted)', border: `0.5px solid ${p.status === k ? col : 'var(--border)'}`, padding: '8px 10px', fontSize: 12, minWidth: 44 }}>{l}</button>)}
                 </div>
               </div>
             ))}
@@ -1624,6 +1638,135 @@ function FeeOverview({ fees, centers }) {
   )
 }
 
+// ---------- Batch 3: offline attendance queue, match squad, error reporting
+const isNetworkError = (m) => /failed to fetch|networkerror|load failed|network request failed/i.test(String(m || ''))
+
+async function flushAttendanceQueue() {
+  let q = []
+  try { q = JSON.parse(localStorage.getItem('sp-att-queue') || '[]') } catch { q = [] }
+  if (!q.length) return 0
+  const rest = []; let sent = 0
+  for (const batch of q) {
+    const { error } = await supabase.from('training_attendance').upsert(batch, { onConflict: 'session_id,player_id' })
+    if (error && isNetworkError(error.message)) rest.push(batch)
+    else if (!error) sent += batch.length
+  }
+  try { localStorage.setItem('sp-att-queue', JSON.stringify(rest)) } catch {}
+  return sent
+}
+
+const errCtx = { clubId: null, userId: null, count: 0 }
+async function reportClientError(err) {
+  try {
+    if (!errCtx.userId || errCtx.count >= 5) return
+    errCtx.count++
+    await supabase.from('app_errors').insert({ club_id: errCtx.clubId, user_id: errCtx.userId, message: String(err?.message || err).slice(0, 900), stack: String(err?.stack || '').slice(0, 3800), page: String(window.location.pathname).slice(0, 250) })
+  } catch {}
+}
+if (typeof window !== 'undefined' && !window.__spErr) {
+  window.__spErr = true
+  window.addEventListener('error', e => reportClientError(e.error || e.message))
+  window.addEventListener('unhandledrejection', e => reportClientError(e.reason))
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { failed: false } }
+  static getDerivedStateFromError() { return { failed: true } }
+  componentDidCatch(err) { reportClientError(err) }
+  render() {
+    if (!this.state.failed) return this.props.children
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center', background: '#0a0f1e', color: '#fff' }}>
+        <img src={LOGO} alt="" style={{ width: 64, height: 64, borderRadius: 12 }} />
+        <h2 style={{ margin: 0 }}>Something went wrong</h2>
+        <p style={{ margin: 0, opacity: 0.8, maxWidth: 320 }}>Sorry about that. The academy has been told. Please reload the app and try again.</p>
+        <button className="btn btn-primary" onClick={() => window.location.reload()}>Reload</button>
+      </div>
+    )
+  }
+}
+
+const SQUAD_ROLES = [['starter', 'Starts', 'var(--green)'], ['sub', 'Bench', 'var(--amber)'], ['unavailable', 'Out', 'var(--red)']]
+
+function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
+  const [players, setPlayers] = useState([])
+  const [roles, setRoles] = useState({})
+  const [orig, setOrig] = useState({})
+  const [notes, setNotes] = useState('')
+  const [search, setSearch] = useState('')
+  const [age, setAge] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('players').select('id,full_name,squad_number,date_of_birth,age_group_override,position,status').eq('club_id', club.id).eq('is_active', true).in('status', ['active', 'injured']).order('full_name'),
+      supabase.from('match_squad').select('player_id,role').eq('fixture_id', fixture.id),
+      supabase.from('match_notes').select('notes').eq('fixture_id', fixture.id).maybeSingle(),
+    ]).then(([{ data: pl }, { data: sq }, { data: nt }]) => {
+      const m = Object.fromEntries((sq || []).map(r => [r.player_id, r.role]))
+      setPlayers(pl || []); setRoles(m); setOrig(m); setNotes(nt?.notes || ''); setLoading(false)
+    })
+  }, [club.id, fixture.id])
+
+  const setRole = (id, r) => setRoles(x => { const n = { ...x }; if (n[id] === r) delete n[id]; else n[id] = r; return n })
+  const count = (r) => Object.values(roles).filter(v => v === r).length
+  const ages = AGE_GROUPS.filter(g => players.some(p => ageGroupOf(p) === g))
+  const shown = players.filter(p => (age === 'all' || ageGroupOf(p) === age) && (!search || p.full_name.toLowerCase().includes(search.toLowerCase())))
+
+  const save = async () => {
+    setSaving(true); setError('')
+    const upserts = Object.entries(roles).filter(([id, r]) => orig[id] !== r).map(([id, r]) => ({ club_id: club.id, fixture_id: fixture.id, player_id: id, role: r }))
+    const removed = Object.keys(orig).filter(id => !roles[id])
+    let err = null
+    if (upserts.length) ({ error: err } = await supabase.from('match_squad').upsert(upserts, { onConflict: 'fixture_id,player_id' }))
+    if (!err && removed.length) ({ error: err } = await supabase.from('match_squad').delete().eq('fixture_id', fixture.id).in('player_id', removed))
+    if (!err) ({ error: err } = await supabase.from('match_notes').upsert({ fixture_id: fixture.id, club_id: club.id, notes: notes.trim(), updated_by: profile.id, updated_at: new Date().toISOString() }, { onConflict: 'fixture_id' }))
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+
+  const nameOf = (id) => players.find(p => p.id === id)?.full_name
+  const shareText = () => {
+    const list = (r) => Object.entries(roles).filter(([, v]) => v === r).map(([id]) => nameOf(id)).filter(Boolean).sort().join(', ')
+    return `⚽ ${club.name} vs ${fixture.opponent}\n${fmtDate(fixture.match_date)} ${fmtTime(fixture.match_date)}${fixture.venue ? '\n📍 ' + fixture.venue : ''}\n\nStarting: ${list('starter') || 'to be confirmed'}\nBench: ${list('sub') || '-'}`
+  }
+
+  return (
+    <Modal title={`Squad · vs ${fixture.opponent}`} onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 10 }}>{error}</Note>}
+        <div style={{ fontSize: 12, marginBottom: 10 }}>{count('starter')} starting · {count('sub')} on the bench · {count('unavailable')} out</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+          <input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
+          <select value={age} onChange={e => setAge(e.target.value)} style={{ width: 120 }}><option value="all">All ages</option>{ages.map(g => <option key={g}>{g}</option>)}</select>
+        </div>
+        {loading ? <Spinner /> : (
+          <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+            {shown.map(p => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px', borderBottom: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 140, fontSize: 13, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)} · {p.position || ''}{p.status === 'injured' ? ' · injured' : ''}</span></div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {SQUAD_ROLES.map(([k, l, col]) => <button key={k} onClick={() => setRole(p.id, k)} className="btn btn-sm" style={{ background: roles[p.id] === k ? col : 'transparent', color: roles[p.id] === k ? '#000' : 'var(--text-muted)', border: `0.5px solid ${roles[p.id] === k ? col : 'var(--border)'}`, padding: '6px 10px', fontSize: 12 }}>{l}</button>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="form-group" style={{ marginTop: 14 }}>
+          <label>Coach notes (private, staff only)</label>
+          <textarea rows={3} maxLength={3000} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Tactics, what went well, who to work with..." />
+        </div>
+      </div>
+      <div className="modal-footer">
+        <a className="btn btn-ghost" href={waShare(shareText())} target="_blank" rel="noreferrer">Share squad on WhatsApp</a>
+        <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : 'Save squad'}</button>
+      </div>
+    </Modal>
+  )
+}
+
 function TrainingPage({ club, userRole, profile }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1678,7 +1821,7 @@ function TrainingPage({ club, userRole, profile }) {
           </div>
         )}
       {attMsg && <Note kind="ok" style={{ marginTop: 12 }}>{attMsg}</Note>}
-      {attSession && <AttendanceModal club={club} profile={profile} session={attSession} onClose={() => setAttSession(null)} onSaved={() => { setAttSession(null); setAttMsg('Attendance saved'); setTimeout(() => setAttMsg(''), 4000) }} />}
+      {attSession && <AttendanceModal club={club} profile={profile} session={attSession} onClose={() => setAttSession(null)} onSaved={(m) => { setAttSession(null); setAttMsg(typeof m === 'string' ? m : 'Attendance saved'); setTimeout(() => setAttMsg(''), 6000) }} />}
       {showAdd && <AddTrainingModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
     </div>
   )
@@ -2958,6 +3101,17 @@ function App() {
     loadProfile()
   }, [session, retryCode])
 
+  useEffect(() => {
+    if (!profile) return
+    errCtx.clubId = profile.club_id; errCtx.userId = session?.user?.id || null
+    if (profile.role === 'manager' || profile.role === 'coach') {
+      flushAttendanceQueue()
+      const on = () => { flushAttendanceQueue() }
+      window.addEventListener('online', on)
+      return () => window.removeEventListener('online', on)
+    }
+  }, [profile, session])
+
   if (session === undefined || loading) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
       <img src={LOGO} alt="Beyond the Ball" style={{ width: 72, height: 72, borderRadius: 14 }} />
@@ -3028,7 +3182,7 @@ function App() {
       case 'staff': return profile.role === 'manager' ? <StaffPage club={club} profile={profile} /> : null
       case 'approvals': return profile.role !== 'manager' ? null : <ApprovalsPage profile={profile} club={club} />
       case 'squad': return <SquadPage userRole={profile.role} club={club} />
-      case 'fixtures': return <FixturesPage userRole={profile.role} club={club} />
+      case 'fixtures': return <FixturesPage userRole={profile.role} club={club} profile={profile} />
       case 'match-centre': return <MatchCentrePage club={club} userRole={profile.role} />
       case 'training': return <TrainingPage userRole={profile.role} club={club} profile={profile} />
       case 'absences': return profile.role === 'parent' ? null : <AbsencesPage club={club} profile={profile} />
@@ -3094,5 +3248,5 @@ function App() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode><App /></React.StrictMode>
+  <React.StrictMode><ErrorBoundary><App /></ErrorBoundary></React.StrictMode>
 )
