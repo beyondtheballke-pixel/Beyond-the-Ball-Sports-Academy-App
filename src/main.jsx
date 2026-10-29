@@ -17,6 +17,23 @@ const fmtTime = (d) => { if (!d) return '—'; const t = new Date(d); return (t.
 const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '—'
 const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d).getTime(); const h = Math.floor(diff / 3600000); if (h < 1) return 'Just now'; if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago` }
 const LOGO = '/bb-logo.jpg'
+
+// Mobile layout fixes: solid (non-see-through) menus and room above the bottom bar
+if (typeof document !== 'undefined' && !document.getElementById('sp-mobile-fix')) {
+  const st = document.createElement('style'); st.id = 'sp-mobile-fix'
+  st.textContent = `
+  .sidebar { background: #0a0f1e !important; opacity: 1 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; z-index: 1001 !important; overflow-y: auto; }
+  .sidebar-overlay { z-index: 1000 !important; background: rgba(0,0,0,0.65) !important; }
+  .mobile-header { background: #0a0f1e !important; opacity: 1 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; z-index: 900 !important; }
+  .bottom-nav { background: #0a0f1e !important; opacity: 1 !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; z-index: 900 !important; overflow-x: auto; padding-bottom: env(safe-area-inset-bottom); border-top: 1px solid rgba(255,255,255,0.12); }
+  .bottom-nav-item { flex: 0 0 auto; min-width: 64px; }
+  @media (max-width: 900px) { .page { padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important; } }
+  .modal-overlay, .modal-backdrop { z-index: 1100 !important; }
+  .modal { background: #111830; opacity: 1 !important; }
+  `
+  document.head.appendChild(st)
+}
+
 const HOLIDAY_FORMATS = [['Under 9', '5v5'], ['Under 11', '7v7'], ['Under 13', '9v9'], ['Under 15', '11v11']]
 const oursTheirs = (f) => f.is_home ? [f.home_score ?? 0, f.away_score ?? 0] : [f.away_score ?? 0, f.home_score ?? 0]
 const AGE_GROUPS = ['U7', 'U9', 'U11', 'U13', 'U15', 'U17', 'U19', 'Open']
