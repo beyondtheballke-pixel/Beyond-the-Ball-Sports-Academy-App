@@ -18,6 +18,32 @@ const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '—'
 const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d).getTime(); const h = Math.floor(diff / 3600000); if (h < 1) return 'Just now'; if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago` }
 const LOGO = '/bb-logo.jpg'
 
+// Turn raw database / network errors into something a parent can act on.
+function friendly(msg) {
+  const m = String(msg || '')
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(m)) return 'No internet connection. Check your data or Wi-Fi and try again.'
+  if (/invalid login credentials/i.test(m)) return 'Wrong email or password. Use "Forgot password?" if you cannot remember it.'
+  if (/already registered|already been registered/i.test(m)) return 'This email is already registered. Please sign in instead.'
+  if (/rate limit|too many requests|security purposes/i.test(m)) return 'Too many attempts. Please wait a minute and try again.'
+  if (/row-level security|permission denied|not allowed/i.test(m)) return 'You do not have permission to do that.'
+  if (/duplicate key|already exists/i.test(m)) return 'That already exists.'
+  if (/violates (check|foreign key|not-null)|constraint|relation ".*" does not exist|column ".*" does not exist/i.test(m)) return 'Something in the form is not valid. Please check your entries and try again.'
+  if (/jwt|token.*expired|session/i.test(m)) return 'Your session has expired. Please sign in again.'
+  return m
+}
+
+// Make the app installable (Add to Home screen) without touching index.html.
+if (typeof document !== 'undefined' && !document.getElementById('sp-pwa')) {
+  const add = (tag, attrs) => { const el = document.createElement(tag); Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v)); el.setAttribute('data-sp', '1'); document.head.appendChild(el) }
+  add('link', { id: 'sp-pwa', rel: 'manifest', href: '/manifest.webmanifest' })
+  add('link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' })
+  add('link', { rel: 'icon', type: 'image/png', href: '/icon-192.png' })
+  add('meta', { name: 'theme-color', content: '#0a0f1e' })
+  add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' })
+  add('meta', { name: 'mobile-web-app-capable', content: 'yes' })
+  add('meta', { name: 'apple-mobile-web-app-title', content: 'BTB Academy' })
+}
+
 // Mobile layout fixes: solid (non-see-through) menus and room above the bottom bar
 if (typeof document !== 'undefined' && !document.getElementById('sp-mobile-fix')) {
   const st = document.createElement('style'); st.id = 'sp-mobile-fix'
@@ -133,10 +159,20 @@ function Login() {
   const [coachMode, setCoachMode] = useState(false)
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const isSignup = mode === 'signup'
+  const isForgot = mode === 'forgot'
 
   const submit = async (e) => {
     e.preventDefault()
     setError(''); setNotice('')
+    if (isForgot) {
+      if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setError('Enter the email you registered with'); return }
+      setLoading(true)
+      const { error: err } = await supabase.auth.resetPasswordForEmail(form.email.trim(), { redirectTo: window.location.origin })
+      setLoading(false)
+      if (err) setError(friendly(err.message))
+      else setNotice('If that email is registered, a reset link is on its way. Open it on this phone, then choose a new password. Check your spam folder too.')
+      return
+    }
     if (isSignup) {
       if (coachMode && form.code.trim().length < 8) { setError('Enter the invite code from the academy manager'); return }
       if (form.full_name.trim().length < 2) { setError('Please enter your full name'); return }
@@ -149,12 +185,12 @@ function Login() {
         email: form.email.trim(), password: form.password,
         options: { data: { full_name: form.full_name.trim(), phone: form.phone.trim(), invite_code: coachMode ? form.code.trim().toUpperCase() : '' } }
       })
-      if (err) { setError(err.message); setLoading(false); return }
+      if (err) { setError(friendly(err.message)); setLoading(false); return }
       // If email confirmation is switched on there is no session yet.
       if (!data.session) setNotice('Account created. Check your email to confirm your address, then sign in.')
     } else {
       const { error: err } = await supabase.auth.signInWithPassword({ email: form.email.trim(), password: form.password })
-      if (err) { setError(err.message); setLoading(false); return }
+      if (err) { setError(friendly(err.message)); setLoading(false); return }
     }
     setLoading(false)
   }
@@ -164,7 +200,7 @@ function Login() {
       <div className="login-card">
         <img src={LOGO} alt="Beyond the Ball" style={{ width: 96, height: 96, borderRadius: 16, margin: '0 auto 12px', display: 'block' }} />
         <div className="login-title">Beyond the Ball</div>
-        <div className="login-sub">{isSignup ? (coachMode ? 'Coach registration' : 'Parent & guardian registration') : 'Sports Academy Platform'}</div>
+        <div className="login-sub">{isForgot ? 'Reset your password' : isSignup ? (coachMode ? 'Coach registration' : 'Parent & guardian registration') : 'Sports Academy Platform'}</div>
         {error && <div className="login-error">{error}</div>}
         {notice && <Note kind="ok" style={{ marginBottom: 12 }}>{notice}</Note>}
         <form onSubmit={submit}>
@@ -185,24 +221,25 @@ function Login() {
             <label>Email</label>
             <input type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="your@email.com" required />
           </div>
-          <div className="form-group" style={{ marginBottom: isSignup ? 12 : 20 }}>
+          {!isForgot && <div className="form-group" style={{ marginBottom: isSignup ? 12 : 20 }}>
             <label>Password</label>
             <input type="password" value={form.password} onChange={e => set('password', e.target.value)} placeholder="••••••••" required autoComplete={isSignup ? 'new-password' : 'current-password'} />
-          </div>
+          </div>}
           {isSignup && (
             <div className="form-group" style={{ marginBottom: 20 }}>
               <label>Confirm password</label>
               <input type="password" value={form.confirm} onChange={e => set('confirm', e.target.value)} placeholder="••••••••" required autoComplete="new-password" />
             </div>
           )}
+          {mode === 'signin' && <div style={{ textAlign: 'right', marginTop: -10, marginBottom: 14 }}><button type="button" onClick={() => { setMode('forgot'); setError(''); setNotice('') }} style={{ background: 'none', border: 'none', color: 'var(--btb-gold)', cursor: 'pointer', fontSize: 12, padding: 0 }}>Forgot password?</button></div>}
           <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={loading}>
-            {loading ? 'Please wait...' : isSignup ? (coachMode ? 'Create coach account' : 'Create parent account') : 'Sign in'}
+            {loading ? 'Please wait...' : isForgot ? 'Send reset link' : isSignup ? (coachMode ? 'Create coach account' : 'Create parent account') : 'Sign in'}
           </button>
         </form>
         <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: 'var(--text-muted)' }}>
-          {isSignup ? 'Already registered? ' : 'New parent or guardian? '}
-          <button type="button" onClick={() => { setMode(isSignup ? 'signin' : 'signup'); setError(''); setNotice('') }} style={{ background: 'none', border: 'none', color: 'var(--btb-gold)', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0 }}>
-            {isSignup ? 'Sign in' : 'Register here'}
+          {isForgot ? 'Remembered it? ' : isSignup ? 'Already registered? ' : 'New parent or guardian? '}
+          <button type="button" onClick={() => { setMode(isSignup || isForgot ? 'signin' : 'signup'); setError(''); setNotice('') }} style={{ background: 'none', border: 'none', color: 'var(--btb-gold)', cursor: 'pointer', fontSize: 12, fontWeight: 600, padding: 0 }}>
+            {isSignup || isForgot ? 'Sign in' : 'Register here'}
           </button>
         </div>
         {isSignup && <label style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center', marginTop: 12, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}><input type="checkbox" style={{ width: 'auto' }} checked={coachMode} onChange={e => setCoachMode(e.target.checked)} /> I'm a coach with an invite code</label>}
@@ -441,7 +478,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
     let playerId
     if (isParent) {
       const { data, error: err } = await supabase.rpc('register_child', { p: form, p_relationship: relationship })
-      if (err) { setError(err.message); setSaving(false); return }
+      if (err) { setError(friendly(err.message)); setSaving(false); return }
       playerId = data
     } else {
       playerId = crypto.randomUUID()
@@ -455,7 +492,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
         contract_start: form.contract_start || null, contract_end: form.contract_end || null, status: 'active', is_active: true,
         training_center_id: form.training_center_id || null, sponsored: !!form.sponsored,
       })
-      if (err) { setError(err.message); setSaving(false); return }
+      if (err) { setError(friendly(err.message)); setSaving(false); return }
       if ((club.registration_fee ?? 0) > 0) {
         await supabase.from('fees').insert({ club_id: club.id, player_id: playerId, description: 'Registration fee (includes two sets of kits)', amount: club.registration_fee, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10), status: form.sponsored ? 'waived' : 'unpaid', term: 'Registration', fee_type: 'registration' })
       }
@@ -627,7 +664,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
 
   const resubmit = async () => {
     const { error } = await supabase.from('players').update({ status: 'pending' }).eq('id', player.id)
-    if (error) { setMsg({ kind: 'error', text: error.message }); return }
+    if (error) { setMsg({ kind: 'error', text: friendly(error.message) }); return }
     onUpdated && onUpdated()
   }
 
@@ -801,7 +838,7 @@ function AddFixtureModal({ club, onClose, onSaved }) {
     setSaving(true)
     const match_date = new Date(`${form.match_date}T${form.match_time}:00`).toISOString()
     const { error: err } = await supabase.from('fixtures').insert({ club_id: club.id, opponent: form.opponent, competition: form.competition, match_date, venue: form.venue || null, is_home: form.is_home, status: 'upcoming' })
-    if (err) { setError(err.message); setSaving(false); return }
+    if (err) { setError(friendly(err.message)); setSaving(false); return }
     onSaved()
   }
 
@@ -904,7 +941,7 @@ function MatchCentrePage({ club, userRole }) {
   const choose = async (f) => { setSelected(f); setAction(null); setMsg(null); await loadEvents(f.id) }
   const setStatus = async (patch, ok) => {
     const { error } = await supabase.from('fixtures').update(patch).eq('id', selected.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg(ok ? { kind: 'ok', text: ok } : null); await refresh(selected.id) }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setMsg(ok ? { kind: 'ok', text: ok } : null); await refresh(selected.id) }
   }
   const koUnset = selected ? nairobiTime(selected.match_date) === '00:00' : true
   const koMs = selected ? new Date(selected.match_date).getTime() : 0
@@ -922,20 +959,20 @@ function MatchCentrePage({ club, userRole }) {
       : `Start the match against ${selected.opponent} now? The match clock starts at 1'.`
     if (!confirm(text)) return
     const { error } = await supabase.rpc('start_match', { p_fixture: selected.id, p_force: force })
-    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match started' }); await refresh(selected.id) }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setMsg({ kind: 'ok', text: 'Match started' }); await refresh(selected.id) }
   }
   const cancelStart = async () => {
     const n = events.length
     if (!confirm(`Cancel this match start? The match goes back to Upcoming${n ? ` and its ${n} logged event${n === 1 ? '' : 's'} will be deleted` : ''}. Use this only if the match was started by mistake.`)) return
     const { error } = await supabase.rpc('cancel_match_start', { p_fixture: selected.id })
-    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match start cancelled. It is back to Upcoming.' }); setAction(null); await refresh(selected.id) }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setMsg({ kind: 'ok', text: 'Match start cancelled. It is back to Upcoming.' }); setAction(null); await refresh(selected.id) }
   }
   const endMatch = () => { if (confirm('End the match? You can still add or remove events afterwards.')) setStatus({ status: 'completed' }, 'Match ended') }
   const reopenMatch = () => { if (confirm('Put this match back to live?')) setStatus({ status: 'live' }, 'Match is live again') }
   const resetMatch = async () => {
     if (!confirm(`Reset the match against ${selected.opponent}? This deletes its score and all events and puts it back to Upcoming.`)) return
     const { error } = await supabase.rpc('reset_fixture', { p_fixture: selected.id })
-    if (error) setMsg({ kind: 'error', text: error.message }); else { setMsg({ kind: 'ok', text: 'Match reset to upcoming' }); setAction(null); await refresh(selected.id) }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setMsg({ kind: 'ok', text: 'Match reset to upcoming' }); setAction(null); await refresh(selected.id) }
   }
 
   const openAction = (a) => { setAction(a); setMsg(null); setForm({ minute: liveMinute ? String(liveMinute) : (selected.minute ? String(selected.minute) : ''), player_id: '', assist_id: '', off_id: '', notes: '' }) }
@@ -961,7 +998,7 @@ function MatchCentrePage({ club, userRole }) {
     })
     if (!error && selected.status === 'live') await supabase.from('fixtures').update({ minute }).eq('id', selected.id)
     setSaving(false)
-    if (error) { setMsg({ kind: 'error', text: error.message }); return }
+    if (error) { setMsg({ kind: 'error', text: friendly(error.message) }); return }
     setMsg({ kind: 'ok', text: `${a_label(t)} logged at ${minute}'` })
     setAction(null)
     await refresh(selected.id)
@@ -970,7 +1007,7 @@ function MatchCentrePage({ club, userRole }) {
   const removeEvent = async (evt) => {
     if (!confirm(`Remove "${a_label(evt.event_type)}" at ${evt.minute}'?`)) return
     const { error } = await supabase.from('match_events').delete().eq('id', evt.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else await refresh(selected.id)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else await refresh(selected.id)
   }
 
   const describe = (e) => {
@@ -1152,7 +1189,7 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
     setSaving(true); setError('')
     const { error: err } = await supabase.from('training_attendance').upsert(payload, { onConflict: 'session_id,player_id' })
     setSaving(false)
-    if (err) { setError(err.message); return }
+    if (err) { setError(friendly(err.message)); return }
     onSaved()
   }
 
@@ -1236,7 +1273,7 @@ function ReportAbsenceModal({ club, profile, kids, onClose, onSaved }) {
     setSaving(true); setError('')
     const { error: err } = await supabase.from('absence_reports').insert({ club_id: club.id, player_id: form.player_id, reported_by: profile.id, date_from: form.date_from, date_to: form.date_to, reason_type: form.reason_type, reason: form.reason.trim() || null })
     setSaving(false)
-    if (err) { setError(err.message); return }
+    if (err) { setError(friendly(err.message)); return }
     const kid = kids.find(k => k.id === form.player_id)
     const label = ABSENCE_REASONS.find(r => r[0] === form.reason_type)[1]
     setDone({ text: `Hello, this is ${profile.full_name}. ${kid.full_name} will be absent from ${fmtDate(form.date_from)}${form.date_to !== form.date_from ? ' to ' + fmtDate(form.date_to) : ''}. Reason: ${label}${form.reason.trim() ? ' - ' + form.reason.trim() : ''}.` })
@@ -1283,14 +1320,14 @@ function AbsencesPage({ club, profile }) {
     const { data, error } = await supabase.from('absence_reports')
       .select('*, player:players(full_name), reporter:profiles!absence_reports_reported_by_fkey(full_name,phone)')
       .eq('club_id', club.id).order('date_from', { ascending: true })
-    if (error) setMsg({ kind: 'error', text: error.message })
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) })
     setRows(data || []); setLoading(false)
   }, [club.id])
   useEffect(() => { load() }, [load])
 
   const ack = async (r) => {
     const { error } = await supabase.from('absence_reports').update({ status: 'acknowledged', acknowledged_by: profile.id, acknowledged_at: new Date().toISOString() }).eq('id', r.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else load()
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else load()
   }
 
   const shown = rows.filter(r => view === 'upcoming' ? r.date_to >= today : r.date_to < today)
@@ -1382,14 +1419,14 @@ function PlayerMedia({ player, club, profile, canEdit }) {
     setBusy('Saving link...')
     const { error } = await supabase.from('player_media').insert({ club_id: club.id, player_id: player.id, kind: 'link', title: link.title.trim() || 'Highlights', external_url: link.url.trim(), uploaded_by: profile?.id || null })
     setBusy('')
-    if (error) setMsg({ kind: 'error', text: error.message }); else { setLink({ title: '', url: '' }); setMsg({ kind: 'ok', text: 'Link added' }); load() }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setLink({ title: '', url: '' }); setMsg({ kind: 'ok', text: 'Link added' }); load() }
   }
 
   const remove = async (m) => {
     if (!confirm('Delete this item? This cannot be undone.')) return
     if (m.file_path) await supabase.storage.from(BUCKET).remove([m.file_path])
     const { error } = await supabase.from('player_media').delete().eq('id', m.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else { setOpen(null); load() }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setOpen(null); load() }
   }
 
   if (!items) return <Spinner />
@@ -1548,7 +1585,7 @@ function FeesPage({ club }) {
 
   const load = useCallback(async () => {
     const [{ data: f }, { data: p }, { data: c }] = await Promise.all([
-      supabase.from('fees').select('*, player:players(full_name,squad_number,sponsored)').eq('club_id', club.id).order('created_at', { ascending: false }),
+      supabase.from('fees').select('*, player:players(full_name,squad_number,sponsored,links:parent_player_links(parent:profiles!parent_player_links_parent_profile_id_fkey(full_name,phone)))').eq('club_id', club.id).order('created_at', { ascending: false }),
       supabase.from('players').select('id,full_name,squad_number,sponsored,training_center_id,attends_both').eq('club_id', club.id).eq('is_active', true).order('full_name'),
       supabase.from('training_centers').select('*').eq('club_id', club.id).eq('is_active', true),
     ])
@@ -1561,7 +1598,7 @@ function FeesPage({ club }) {
     setBusy(true); setMsg(null)
     const { data, error } = await supabase.rpc('generate_monthly_fees', { p_month: new Date().toISOString().slice(0, 10) })
     setBusy(false)
-    if (error) setMsg({ kind: 'error', text: error.message })
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) })
     else { setMsg({ kind: 'ok', text: data === 0 ? 'This month\'s fees were already generated.' : `Created ${data} monthly fee${data === 1 ? '' : 's'} (sponsored players are marked waived).` }); load() }
   }
 
@@ -1569,15 +1606,21 @@ function FeesPage({ club }) {
     const reg = parseInt(settings.registration_fee), mon = parseInt(settings.monthly_fee)
     if (isNaN(reg) || isNaN(mon) || reg < 0 || mon < 0) { setMsg({ kind: 'error', text: 'Enter valid amounts' }); return }
     const { error } = await supabase.from('clubs').update({ registration_fee: reg, monthly_fee: mon }).eq('id', club.id)
-    setMsg(error ? { kind: 'error', text: error.message } : { kind: 'ok', text: 'Fee amounts saved. They apply to new registrations and new months.' })
+    setMsg(error ? { kind: 'error', text: friendly(error.message) } : { kind: 'ok', text: 'Fee amounts saved. They apply to new registrations and new months.' })
   }
 
   const waive = async (f) => {
     if (!confirm(`Waive "${f.description}" for ${f.player?.full_name}?`)) return
     const { error } = await supabase.from('fees').update({ status: 'waived' }).eq('id', f.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else load()
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else load()
   }
 
+  const remindLink = (f) => {
+    const par = f.player?.links?.[0]?.parent
+    if (!par?.phone) return null
+    const due = f.amount - (f.paid_amount || 0)
+    return waChat(par.phone, `Hello ${par.full_name.split(' ')[0]}, a friendly reminder from ${club.name}: ${f.description} for ${f.player.full_name} (${fmtKES(due)}${f.due_date ? ', due ' + fmtDate(f.due_date) : ''}) is still outstanding. You can pay via M-Pesa and send us the confirmation message. Thank you!`)
+  }
   const open = fees.filter(f => f.status !== 'paid' && f.status !== 'waived')
   const totalPending = open.reduce((s, f) => s + (f.amount - (f.paid_amount || 0)), 0)
   const totalCollected = fees.reduce((s, f) => s + (f.paid_amount || 0), 0)
@@ -1627,6 +1670,7 @@ function FeesPage({ club }) {
                     <td style={{ whiteSpace: 'nowrap' }}>
                       {f.status !== 'paid' && f.status !== 'waived' && <>
                         <button className="btn btn-primary btn-sm" onClick={() => setPayFee(f)}>Record payment</button>{' '}
+                        {remindLink(f) && <><a className="btn btn-ghost btn-sm" href={remindLink(f)} target="_blank" rel="noreferrer">Remind</a>{' '}</>}
                         <button className="btn btn-ghost btn-sm" onClick={() => waive(f)}>Waive</button>
                       </>}
                     </td>
@@ -1668,7 +1712,7 @@ function PaymentModal({ fee, onClose, onSaved }) {
     const paid = (fee.paid_amount || 0) + a
     const { error: err } = await supabase.from('fees').update({ paid_amount: paid, status: paid >= fee.amount ? 'paid' : 'partial', payment_method: method, mpesa_ref: ref.trim() || null }).eq('id', fee.id)
     setSaving(false)
-    if (err) { setError(err.message); return }
+    if (err) { setError(friendly(err.message)); return }
     onSaved()
   }
 
@@ -1712,7 +1756,7 @@ function AddFeeModal({ club, players, centers, onClose, onSaved }) {
     const rows = targets.map(p => ({ club_id: club.id, player_id: p.id, description: form.description.trim(), amount: amt, due_date: form.due_date || null, term: form.term || null, status: p.sponsored && form.target === 'player' ? 'unpaid' : 'unpaid', fee_type: form.fee_type }))
     const { error: err } = await supabase.from('fees').insert(rows)
     setSaving(false)
-    if (err) { setError(err.message); return }
+    if (err) { setError(friendly(err.message)); return }
     onSaved()
   }
 
@@ -1800,7 +1844,7 @@ function ComposeModal({ clubId, senderId, onClose }) {
       to_role: form.to_role === 'all' ? null : form.to_role,
     })
     setSaving(false)
-    if (err) { setError(err.message); return }
+    if (err) { setError(friendly(err.message)); return }
     onClose()
   }
 
@@ -2120,7 +2164,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     for (let i = 0; i < 6; i++) { const e = validate(i); if (e) { setStep(i); setError(e); return } }
     setSaving(true); setError('')
     const { data: playerId, error: err } = await supabase.rpc('register_child', { p: { ...c, consent: 'true' }, g, p_relationship: relationship })
-    if (err) { setError(err.message); setSaving(false); return }
+    if (err) { setError(friendly(err.message)); setSaving(false); return }
     if (c.attends_both) await supabase.rpc('set_attends_both', { p_player: playerId, p_both: true })
     const problems = []
     if (photo) {
@@ -2287,7 +2331,7 @@ function StaffPage({ club, profile }) {
     const v = groupUrl.trim()
     if (v && !/^https:\/\/chat\.whatsapp\.com\/\S+$/i.test(v)) { setGroupMsg({ kind: 'error', text: 'Paste the invite link, which starts with https://chat.whatsapp.com/' }); return }
     const { error } = await supabase.from('clubs').update({ whatsapp_group_url: v || null }).eq('id', club.id)
-    if (error) setGroupMsg({ kind: 'error', text: error.message }); else { club.whatsapp_group_url = v || null; setGroupMsg({ kind: 'ok', text: v ? 'Saved. Parents now see a Join WhatsApp button.' : 'Group link removed.' }) }
+    if (error) setGroupMsg({ kind: 'error', text: friendly(error.message) }); else { club.whatsapp_group_url = v || null; setGroupMsg({ kind: 'ok', text: v ? 'Saved. Parents now see a Join WhatsApp button.' : 'Group link removed.' }) }
   }
 
   const load = useCallback(async () => {
@@ -2311,19 +2355,19 @@ function StaffPage({ club, profile }) {
     setSaving(true); setMsg(null)
     const { data, error } = await supabase.rpc('create_invite', { p_name: form.name.trim(), p_phone: form.phone.trim() || null })
     setSaving(false)
-    if (error) { setMsg({ kind: 'error', text: error.message }); return }
+    if (error) { setMsg({ kind: 'error', text: friendly(error.message) }); return }
     setFresh({ name: form.name.trim(), phone: form.phone.trim(), code: data })
     setForm({ name: '', phone: '' }); load()
   }
   const revoke = async (inv) => {
     if (!confirm(`Cancel the invite for ${inv.full_name}?`)) return
     const { error } = await supabase.from('staff_invites').delete().eq('id', inv.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else { if (fresh?.code === inv.code) setFresh(null); load() }
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { if (fresh?.code === inv.code) setFresh(null); load() }
   }
   const toggle = async (p) => {
     if (!confirm(p.is_active ? `Deactivate ${p.full_name}? They will no longer be able to use the app.` : `Reactivate ${p.full_name}?`)) return
     const { error } = await supabase.from('profiles').update({ is_active: !p.is_active }).eq('id', p.id)
-    if (error) setMsg({ kind: 'error', text: error.message }); else load()
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else load()
   }
   const copy = async (text) => { try { await navigator.clipboard.writeText(text); setMsg({ kind: 'ok', text: 'Copied' }) } catch { setMsg({ kind: 'warn', text: 'Could not copy. Select the text and copy it manually.' }) } }
 
@@ -2526,13 +2570,14 @@ function ApprovalsPage({ club, profile, onChanged }) {
   const [opts, setOpts] = useState({})
   const [rejecting, setRejecting] = useState(null)
   const [note, setNote] = useState('')
+  const [notify, setNotify] = useState([])
 
   const load = useCallback(async () => {
     const { data, error: err } = await supabase
       .from('players')
       .select('*, links:parent_player_links(relationship, parent:profiles!parent_player_links_parent_profile_id_fkey(full_name, phone, alt_phone, email, residence, occupation, alt_contact_name, alt_contact_relationship, alt_contact_phone))')
       .eq('club_id', club.id).eq('status', 'pending').order('created_at', { ascending: true })
-    if (err) setError(err.message)
+    if (err) setError(friendly(err.message))
     setItems(data || [])
     setLoading(false)
   }, [club.id])
@@ -2549,6 +2594,8 @@ function ApprovalsPage({ club, profile, onChanged }) {
     const { error: err } = await supabase.rpc('approve_player', { p_player: p.id, p_squad_number: sq ? parseInt(sq) : null, p_center: o.center, p_sponsored: o.sponsored, p_note: o.note || null, p_age_group: o.ageGroup || null })
     setBusy('')
     if (err) { setError(err.message.includes('duplicate') ? 'That squad number is already taken' : err.message); return }
+    const par = p.links?.[0]?.parent
+    if (par?.phone) setNotify(n => [{ id: p.id, who: par.full_name, child: p.full_name, phone: par.phone, text: `Hello ${par.full_name.split(' ')[0]}, good news! ${p.full_name}'s registration at ${club.name} has been approved. Please open the app to see the training schedule and fees: ${window.location.origin}` }, ...n])
     load(); onChanged && onChanged()
   }
 
@@ -2560,7 +2607,9 @@ function ApprovalsPage({ club, profile, onChanged }) {
       reviewed_by: profile.id, reviewed_at: new Date().toISOString(),
     }).eq('id', p.id)
     setBusy('')
-    if (err) { setError(err.message); return }
+    if (err) { setError(friendly(err.message)); return }
+    const par = p.links?.[0]?.parent
+    if (par?.phone) setNotify(n => [{ id: p.id, who: par.full_name, child: p.full_name, phone: par.phone, rejected: true, text: `Hello ${par.full_name.split(' ')[0]}, we could not approve ${p.full_name}'s registration at ${club.name} yet. Reason: ${note.trim()}. Please open the app to check and fix it: ${window.location.origin}` }, ...n])
     setRejecting(null); setNote(''); load(); onChanged && onChanged()
   }
 
@@ -2570,6 +2619,15 @@ function ApprovalsPage({ club, profile, onChanged }) {
     <div className="page">
       <div className="page-hdr"><div><div className="page-title">Approvals</div><div className="page-sub">{items.length} registration{items.length === 1 ? '' : 's'} waiting for review</div></div></div>
       {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+      {notify.map(n => (
+        <Note key={n.id} kind={n.rejected ? 'warn' : 'ok'} style={{ marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 180 }}>{n.rejected ? 'Sent back' : 'Approved'}: <strong>{n.child}</strong>. Let {n.who} know:</div>
+            <a className="btn btn-primary btn-sm" href={waChat(n.phone, n.text)} target="_blank" rel="noreferrer">Tell parent on WhatsApp</a>
+            <button className="btn btn-ghost btn-sm" onClick={() => setNotify(x => x.filter(y => y.id !== n.id))}>Dismiss</button>
+          </div>
+        </Note>
+      ))}
       {items.length === 0
         ? <div className="empty"><div className="empty-title">All caught up</div><div className="empty-sub">New parent registrations will appear here</div></div>
         : items.map(p => {
@@ -2620,6 +2678,33 @@ function ApprovalsPage({ club, profile, onChanged }) {
   )
 }
 
+function SetNewPassword({ onDone }) {
+  const [pw, setPw] = useState(''); const [pw2, setPw2] = useState('')
+  const [error, setError] = useState(''); const [busy, setBusy] = useState(false)
+  const save = async (e) => {
+    e.preventDefault(); setError('')
+    if (pw.length < 8) { setError('Password must be at least 8 characters'); return }
+    if (pw !== pw2) { setError('Passwords do not match'); return }
+    setBusy(true)
+    const { error: err } = await supabase.auth.updateUser({ password: pw })
+    setBusy(false)
+    if (err) setError(friendly(err.message)); else onDone()
+  }
+  return (
+    <div className="login-wrap"><div className="login-card">
+      <img src={LOGO} alt="Beyond the Ball" style={{ width: 80, height: 80, borderRadius: 14, margin: '0 auto 12px', display: 'block' }} />
+      <div className="login-title">Choose a new password</div>
+      <div className="login-sub">You are almost done</div>
+      {error && <div className="login-error">{error}</div>}
+      <form onSubmit={save}>
+        <div className="form-group" style={{ marginBottom: 12 }}><label>New password</label><input type="password" value={pw} onChange={e => setPw(e.target.value)} required autoComplete="new-password" /></div>
+        <div className="form-group" style={{ marginBottom: 20 }}><label>Confirm new password</label><input type="password" value={pw2} onChange={e => setPw2(e.target.value)} required autoComplete="new-password" /></div>
+        <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={busy}>{busy ? 'Saving...' : 'Save password'}</button>
+      </form>
+    </div></div>
+  )
+}
+
 function App() {
   const [session, setSession] = useState(undefined)
   const [profile, setProfile] = useState(null)
@@ -2630,10 +2715,12 @@ function App() {
   const [profileError, setProfileError] = useState('')
   const [retryCode, setRetryCode] = useState('')
   const [codeInput, setCodeInput] = useState('')
+  const [recovering, setRecovering] = useState(false)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') setRecovering(true)
       setSession(session)
       if (!session) { setProfile(null); setClub(null) }
     })
@@ -2673,6 +2760,7 @@ function App() {
     </div>
   )
 
+  if (session && recovering) return <SetNewPassword onDone={() => { setRecovering(false); window.history.replaceState(null, '', window.location.pathname) }} />
   if (!session) return <Login />
   if (!profile || !club) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', flexDirection: 'column', gap: 16 }}>
