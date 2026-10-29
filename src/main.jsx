@@ -360,6 +360,7 @@ function SquadPage({ club, userRole }) {
   const [ageFilter, setAgeFilter] = useState('all')
   const [centers, setCenters] = useState([])
   const [search, setSearch] = useState('')
+  const [showCount, setShowCount] = useState(60)
   const [showAdd, setShowAdd] = useState(false)
   const [selected, setSelected] = useState(null)
 
@@ -393,7 +394,7 @@ function SquadPage({ club, userRole }) {
       </div>
       <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
         <input style={{ flex: 1, background: 'rgba(255,255,255,0.05)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '8px 12px', color: 'var(--text)', fontSize: 13, outline: 'none' }}
-          placeholder="Search players..." value={search} onChange={e => setSearch(e.target.value)} />
+          placeholder="Search players..." value={search} onChange={e => { setSearch(e.target.value); setShowCount(60) }} />
       </div>
       {centers.length > 0 && (
         <div className="filter-pills">
@@ -416,7 +417,7 @@ function SquadPage({ club, userRole }) {
         ? <div className="empty"><div className="empty-title">No players found</div><div className="empty-sub">{userRole === 'manager' ? 'Register your first player to get started' : 'No players match your search'}</div></div>
         : (
           <div className="player-grid">
-            {filtered.map(p => (
+            {filtered.slice(0, showCount).map(p => (
               <div key={p.id} className="player-card" onClick={() => setSelected(p)}>
                 <div className="player-card-img">
                   {p.photo_url ? <img src={p.photo_url} alt={p.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <div style={{ fontSize: 32, color: 'rgba(255,255,255,0.2)' }}>👤</div>}
@@ -432,6 +433,7 @@ function SquadPage({ club, userRole }) {
             ))}
           </div>
         )}
+      {filtered.length > showCount && <div style={{ textAlign: 'center', margin: '12px 0' }}><button className="btn btn-ghost" onClick={() => setShowCount(c => c + 60)}>Show more ({filtered.length - showCount} left)</button></div>}
       {showAdd && <PlayerRegistrationModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole={userRole} onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
     </div>
@@ -584,6 +586,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Home address</label><textarea value={form.home_address} onChange={e => set('home_address', e.target.value)} placeholder="Estate / village, town" /></div>
           </div>
         )}
+        {editing && <EditChildModal player={player} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onUpdated && onUpdated() }} />}
         {tab === 'attendance' && <PlayerAttendance player={player} />}
         {tab === 'media' && <PlayerMedia player={player} club={club} canEdit={isStaff} />}
         {tab === 'documents' && (
@@ -627,6 +630,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
   const [msg, setMsg] = useState(null)
   const isParent = userRole === 'parent'
   const isStaff = userRole === 'manager' || userRole === 'coach'
+  const [editing, setEditing] = useState(false)
 
   const loadDocs = useCallback(async () => {
     const { data } = await supabase.from('player_documents').select('*').eq('player_id', player.id).order('created_at', { ascending: false })
@@ -706,6 +710,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
             <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.l}</button>
           ))}
         </div>
+        {(isParent || isStaff) && (tab === 'profile' || tab === 'academy') && <div style={{ textAlign: 'right', marginBottom: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Edit details</button></div>}
         {tab === 'profile' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Age group', v: ageGroupOf(player) }, { l: 'Training centre', v: centerName }, ...(isStaff && player.sponsored ? [{ l: 'Sponsorship', v: player.sponsorship_note || 'Sponsored (fees waived)' }] : []), { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
@@ -1475,6 +1480,150 @@ function PlayerMedia({ player, club, profile, canEdit }) {
   )
 }
 
+// ---------- Batch 2: printable receipts / statements, CSV export, parent edit screens
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
+
+function printDoc(title, body) {
+  const w = window.open('', '_blank')
+  if (!w) { alert('Please allow pop-ups for this site to open the document.'); return }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>
+  body{font-family:Arial,Helvetica,sans-serif;color:#111;max-width:720px;margin:0 auto;padding:20px}
+  h1{font-size:20px;margin:0}h2{font-size:15px;margin:18px 0 6px}.muted{color:#666;font-size:12px}
+  table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px}th,td{text-align:left;padding:7px 6px;border-bottom:1px solid #ddd}th{background:#f3f3f3}
+  .r{text-align:right}.total{font-weight:700}.head{display:flex;gap:12px;align-items:center;border-bottom:2px solid #111;padding-bottom:10px}
+  .head img{width:56px;height:56px;border-radius:8px}.np{margin-top:24px}button{padding:10px 18px;font-size:14px}
+  @media print{.np{display:none}}</style></head><body>${body}<p class="np"><button onclick="window.print()">Print / Save as PDF</button></p></body></html>`)
+  w.document.close()
+}
+
+const docHead = (club, title) => `<div class="head"><img src="${window.location.origin}${LOGO}" alt=""><div><h1>${esc(club.name)}</h1><div class="muted">${esc(title)}</div></div></div>`
+const feeDate = (f) => new Date(f.updated_at || f.created_at).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })
+const feeBalance = (f) => f.status === 'waived' ? 0 : Math.max(0, (f.amount || 0) - (f.paid_amount || 0))
+
+function printReceipt(fee, club) {
+  const no = 'R-' + String(fee.id).slice(0, 8).toUpperCase()
+  printDoc('Receipt ' + no, `${docHead(club, 'Payment receipt')}
+    <h2>Receipt ${esc(no)}</h2>
+    <table><tr><td>Player</td><td class="r">${esc(fee.player?.full_name)}</td></tr>
+    <tr><td>For</td><td class="r">${esc(fee.description)}</td></tr>
+    <tr><td>Fee amount</td><td class="r">${esc(fmtKES(fee.amount))}</td></tr>
+    <tr><td>Amount paid</td><td class="r total">${esc(fmtKES(fee.paid_amount))}</td></tr>
+    <tr><td>Balance</td><td class="r">${esc(fmtKES(feeBalance(fee)))}</td></tr>
+    <tr><td>Method</td><td class="r">${esc(fee.payment_method || '—')}</td></tr>
+    <tr><td>Reference</td><td class="r">${esc(fee.mpesa_ref || '—')}</td></tr>
+    <tr><td>Date recorded</td><td class="r">${esc(feeDate(fee))}</td></tr></table>
+    <p class="muted">Thank you for being part of ${esc(club.name)}.</p>`)
+}
+
+function printStatement(fees, club, who) {
+  const rows = [...fees].sort((a, b) => new Date(a.due_date || a.created_at) - new Date(b.due_date || b.created_at))
+  const owed = rows.reduce((s, f) => s + feeBalance(f), 0), paid = rows.reduce((s, f) => s + (f.paid_amount || 0), 0)
+  printDoc('Fee statement', `${docHead(club, 'Fee statement')}
+    <p class="muted">${esc(who)} · generated ${esc(new Date().toLocaleDateString('en-KE', { day: 'numeric', month: 'long', year: 'numeric' }))}</p>
+    <table><tr><th>Player</th><th>Item</th><th>Due</th><th class="r">Amount</th><th class="r">Paid</th><th class="r">Balance</th><th>Status</th></tr>
+    ${rows.map(f => `<tr><td>${esc(f.player?.full_name)}</td><td>${esc(f.description)}</td><td>${esc(f.due_date ? fmtDate(f.due_date) : '—')}</td><td class="r">${esc(fmtKES(f.amount))}</td><td class="r">${esc(fmtKES(f.paid_amount))}</td><td class="r">${esc(fmtKES(feeBalance(f)))}</td><td>${esc(f.status)}</td></tr>`).join('')}
+    <tr class="total"><td colspan="4">Total paid</td><td class="r">${esc(fmtKES(paid))}</td><td class="r">${esc(fmtKES(owed))}</td><td>outstanding</td></tr></table>`)
+}
+
+function downloadCsv(filename, rows) {
+  const cell = (v) => { let t = String(v ?? ''); if (/^[=+\-@]/.test(t)) t = "'" + t; return '"' + t.replace(/"/g, '""') + '"' }
+  const blob = new Blob(['﻿' + rows.map(r => r.map(cell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000)
+}
+
+function EditContactModal({ profile, onClose, onSaved }) {
+  const [f, setF] = useState({ full_name: profile.full_name || '', phone: profile.phone || '', alt_phone: profile.alt_phone || '', residence: profile.residence || '', alt_contact_name: profile.alt_contact_name || '', alt_contact_relationship: profile.alt_contact_relationship || '', alt_contact_phone: profile.alt_contact_phone || '' })
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const save = async () => {
+    setSaving(true); setError('')
+    const { error: err } = await supabase.rpc('update_my_contact', { p: f })
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title="My contact details" onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="form-grid">
+          <FormField label="Parent / guardian's full name *" full><input value={f.full_name} onChange={e => set('full_name', e.target.value)} maxLength={100} /></FormField>
+          <FormField label="Phone / WhatsApp *"><input type="tel" value={f.phone} onChange={e => set('phone', e.target.value)} /></FormField>
+          <FormField label="Second phone number"><input type="tel" value={f.alt_phone} onChange={e => set('alt_phone', e.target.value)} /></FormField>
+          <FormField label="Where you live *" full><input value={f.residence} onChange={e => set('residence', e.target.value)} /></FormField>
+          <FormField label="Alternative contact's full name *" full><input value={f.alt_contact_name} onChange={e => set('alt_contact_name', e.target.value)} /></FormField>
+          <FormField label="Their relationship to the child *"><input value={f.alt_contact_relationship} onChange={e => set('alt_contact_relationship', e.target.value)} /></FormField>
+          <FormField label="Their phone number *"><input type="tel" value={f.alt_contact_phone} onChange={e => set('alt_contact_phone', e.target.value)} /></FormField>
+        </div>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+    </Modal>
+  )
+}
+
+function EditChildModal({ player, onClose, onSaved }) {
+  const [f, setF] = useState({ home_address: player.home_address || '', school_name: player.school_name || '', school_grade: player.school_grade || '', medical_conditions: player.medical_conditions || '', allergies: player.allergies || '', height_cm: player.height_cm ?? '', weight_kg: player.weight_kg ?? '', position_detail: player.position_detail || '', dominant_foot: player.dominant_foot || 'Right' })
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const save = async () => {
+    setSaving(true); setError('')
+    const { error: err } = await supabase.rpc('update_child_details', { p_player: player.id, p: { ...f, height_cm: String(f.height_cm ?? ''), weight_kg: String(f.weight_kg ?? '') } })
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title={`Update ${player.full_name.split(' ')[0]}'s details`} onClose={onClose}>
+      <div className="modal-body">
+        <Note kind="info" style={{ marginBottom: 12 }}>To change the name, date of birth, training centre or fees, please contact the academy.</Note>
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="form-grid">
+          <FormField label="Where the child lives *" full><input value={f.home_address} onChange={e => set('home_address', e.target.value)} /></FormField>
+          <FormField label="School *"><input value={f.school_name} onChange={e => set('school_name', e.target.value)} /></FormField>
+          <FormField label="Grade / class"><input value={f.school_grade} onChange={e => set('school_grade', e.target.value)} /></FormField>
+          <FormField label="Medical conditions" full><textarea value={f.medical_conditions} onChange={e => set('medical_conditions', e.target.value)} /></FormField>
+          <FormField label="Allergies" full><textarea value={f.allergies} onChange={e => set('allergies', e.target.value)} /></FormField>
+          <FormField label="Height (cm)"><input type="number" value={f.height_cm} onChange={e => set('height_cm', e.target.value)} /></FormField>
+          <FormField label="Weight (kg)"><input type="number" value={f.weight_kg} onChange={e => set('weight_kg', e.target.value)} /></FormField>
+          <FormField label="Position detail"><input value={f.position_detail} onChange={e => set('position_detail', e.target.value)} /></FormField>
+          <FormField label="Dominant foot"><select value={f.dominant_foot} onChange={e => set('dominant_foot', e.target.value)}>{['Right', 'Left', 'Both'].map(x => <option key={x}>{x}</option>)}</select></FormField>
+        </div>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+    </Modal>
+  )
+}
+
+function FeeOverview({ fees, centers }) {
+  const [open, setOpen] = useState(false)
+  const real = fees.filter(f => f.status !== 'waived')
+  const group = (keyFn) => {
+    const m = {}
+    real.forEach(f => { const k = keyFn(f); m[k] = m[k] || { billed: 0, paid: 0 }; m[k].billed += f.amount || 0; m[k].paid += f.paid_amount || 0 })
+    return Object.entries(m)
+  }
+  const centreName = (id) => centers.find(c => c.id === id)?.name || 'No centre'
+  const byCentre = group(f => centreName(f.player?.training_center_id)).sort()
+  const byMonth = group(f => (f.due_date || f.created_at || '').slice(0, 7)).sort((a, b) => b[0].localeCompare(a[0]))
+  const Table = ({ title, rows, label }) => (
+    <div style={{ flex: 1, minWidth: 260 }}>
+      <div style={{ fontWeight: 700, fontSize: 13, margin: '10px 0 6px' }}>{title}</div>
+      <table style={{ width: '100%', fontSize: 12 }}>
+        <thead><tr><th style={{ textAlign: 'left' }}>{label}</th><th style={{ textAlign: 'right' }}>Billed</th><th style={{ textAlign: 'right' }}>Collected</th><th style={{ textAlign: 'right' }}>Owed</th></tr></thead>
+        <tbody>{rows.map(([k, v]) => <tr key={k}><td>{k}</td><td style={{ textAlign: 'right' }}>{fmtKES(v.billed)}</td><td style={{ textAlign: 'right' }}>{fmtKES(v.paid)}</td><td style={{ textAlign: 'right', color: v.billed - v.paid > 0 ? 'var(--red)' : 'var(--green)' }}>{fmtKES(Math.max(0, v.billed - v.paid))}</td></tr>)}</tbody>
+      </table>
+    </div>
+  )
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-hdr" style={{ cursor: 'pointer' }} onClick={() => setOpen(o => !o)}><div className="card-title">Money overview {open ? '▾' : '▸'}</div></div>
+      {open && <div className="card-body" style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
+        <Table title="By training centre" rows={byCentre} label="Centre" />
+        <Table title="By month" rows={byMonth} label="Month" />
+      </div>}
+    </div>
+  )
+}
+
 function TrainingPage({ club, userRole, profile }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1582,10 +1731,12 @@ function FeesPage({ club }) {
   const [busy, setBusy] = useState(false)
   const [settings, setSettings] = useState({ registration_fee: club.registration_fee ?? 2500, monthly_fee: club.monthly_fee ?? 2500 })
   const [filter, setFilter] = useState('open')
+  const [feeSearch, setFeeSearch] = useState('')
+  const [feeLimit, setFeeLimit] = useState(50)
 
   const load = useCallback(async () => {
     const [{ data: f }, { data: p }, { data: c }] = await Promise.all([
-      supabase.from('fees').select('*, player:players(full_name,squad_number,sponsored,links:parent_player_links(parent:profiles!parent_player_links_parent_profile_id_fkey(full_name,phone)))').eq('club_id', club.id).order('created_at', { ascending: false }),
+      supabase.from('fees').select('*, player:players(full_name,squad_number,sponsored,training_center_id,links:parent_player_links(parent:profiles!parent_player_links_parent_profile_id_fkey(full_name,phone)))').eq('club_id', club.id).order('created_at', { ascending: false }),
       supabase.from('players').select('id,full_name,squad_number,sponsored,training_center_id,attends_both').eq('club_id', club.id).eq('is_active', true).order('full_name'),
       supabase.from('training_centers').select('*').eq('club_id', club.id).eq('is_active', true),
     ])
@@ -1625,7 +1776,9 @@ function FeesPage({ club }) {
   const totalPending = open.reduce((s, f) => s + (f.amount - (f.paid_amount || 0)), 0)
   const totalCollected = fees.reduce((s, f) => s + (f.paid_amount || 0), 0)
   const waivedTotal = fees.filter(f => f.status === 'waived').reduce((s, f) => s + f.amount, 0)
-  const shown = filter === 'open' ? open : filter === 'waived' ? fees.filter(f => f.status === 'waived') : filter === 'paid' ? fees.filter(f => f.status === 'paid') : fees
+  const byStatus = filter === 'open' ? open : filter === 'waived' ? fees.filter(f => f.status === 'waived') : filter === 'paid' ? fees.filter(f => f.status === 'paid') : fees
+  const shown = feeSearch ? byStatus.filter(f => (f.player?.full_name || '').toLowerCase().includes(feeSearch.toLowerCase())) : byStatus
+  const exportFees = () => downloadCsv('fees.csv', [['Player', 'Centre', 'Description', 'Type', 'Amount', 'Paid', 'Balance', 'Status', 'Due', 'Method', 'Reference'], ...fees.map(f => [f.player?.full_name, centers.find(c => c.id === f.player?.training_center_id)?.name, f.description, f.fee_type, f.amount, f.paid_amount || 0, feeBalance(f), f.status, f.due_date, f.payment_method, f.mpesa_ref])])
 
   if (loading) return <Spinner />
 
@@ -1634,6 +1787,7 @@ function FeesPage({ club }) {
       <div className="page-hdr">
         <div><div className="page-title">Fee management</div><div className="page-sub">Registration {fmtKES(settings.registration_fee)} · Monthly {fmtKES(settings.monthly_fee)}</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-ghost" onClick={exportFees}>Export CSV</button>
           <button className="btn btn-ghost" onClick={generate} disabled={busy}>{busy ? 'Working...' : 'Generate this month\'s fees'}</button>
           <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add fee</button>
         </div>
@@ -1644,6 +1798,8 @@ function FeesPage({ club }) {
         <div className="stat-card"><div className="stat-label">Collected</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(totalCollected)}</div><div className="stat-change up">Received</div></div>
         <div className="stat-card"><div className="stat-label">Waived</div><div className="stat-value" style={{ fontSize: 18 }}>{fmtKES(waivedTotal)}</div><div className="stat-change neutral">Sponsorship</div></div>
       </div>
+      <FeeOverview fees={fees} centers={centers} />
+      <input placeholder="Search by player name..." value={feeSearch} onChange={e => { setFeeSearch(e.target.value); setFeeLimit(50) }} style={{ marginBottom: 12, width: '100%' }} />
       <div className="filter-pills">
         {[['open', 'Outstanding'], ['paid', 'Paid'], ['waived', 'Waived'], ['all', 'All']].map(([k, l]) => <button key={k} className={`pill ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}
       </div>
@@ -1654,7 +1810,7 @@ function FeesPage({ club }) {
             <tbody>
               {shown.length === 0
                 ? <tr><td colSpan={7}><div className="empty"><div className="empty-sub">Nothing here</div></div></td></tr>
-                : shown.map(f => (
+                : shown.slice(0, feeLimit).map(f => (
                   <tr key={f.id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1673,9 +1829,11 @@ function FeesPage({ club }) {
                         {remindLink(f) && <><a className="btn btn-ghost btn-sm" href={remindLink(f)} target="_blank" rel="noreferrer">Remind</a>{' '}</>}
                         <button className="btn btn-ghost btn-sm" onClick={() => waive(f)}>Waive</button>
                       </>}
+                      {(f.paid_amount || 0) > 0 && <button className="btn btn-ghost btn-sm" onClick={() => printReceipt(f, club)}>Receipt</button>}
                     </td>
                   </tr>
                 ))}
+              {shown.length > feeLimit && <tr><td colSpan={7} style={{ textAlign: 'center' }}><button className="btn btn-ghost btn-sm" onClick={() => setFeeLimit(l => l + 50)}>Show more ({shown.length - feeLimit} left)</button></td></tr>}
             </tbody>
           </table>
         </div>
@@ -2103,6 +2261,19 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
   const setCv = (k, v) => setC(p => ({ ...p, [k]: v }))
   const docTypes = DOC_TYPES.filter(d => !d.staffOnly)
   const today = new Date().toISOString().slice(0, 10)
+  const DRAFT_KEY = `sp-draft-${profile.id}`
+  const [restored, setRestored] = useState(false)
+  useEffect(() => {
+    try {
+      const d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null')
+      if (d && d.v === 1) { setG(x => ({ ...x, ...d.g })); setC(x => ({ ...x, ...d.c })); setRelationship(d.relationship || 'mother'); setStep(d.step || 0); setMaxStep(d.maxStep || 0); setRestored(true) }
+    } catch {}
+  }, [])
+  useEffect(() => {
+    const t = setTimeout(() => { try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ v: 1, g, c, relationship, step, maxStep })) } catch {} }, 400)
+    return () => clearTimeout(t)
+  }, [g, c, relationship, step, maxStep])
+  const startOver = () => { try { localStorage.removeItem(DRAFT_KEY) } catch {}; onClose() }
 
   useEffect(() => () => { if (photoPreview) URL.revokeObjectURL(photoPreview) }, [photoPreview])
   useEffect(() => { supabase.from('training_centers').select('id,name,address').eq('club_id', club.id).eq('is_active', true).order('name').then(({ data }) => setCenters(data || [])) }, [club.id])
@@ -2165,6 +2336,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
     setSaving(true); setError('')
     const { data: playerId, error: err } = await supabase.rpc('register_child', { p: { ...c, consent: 'true' }, g, p_relationship: relationship })
     if (err) { setError(friendly(err.message)); setSaving(false); return }
+    try { localStorage.removeItem(DRAFT_KEY) } catch {}
     if (c.attends_both) await supabase.rpc('set_attends_both', { p_player: playerId, p_both: true })
     const problems = []
     if (photo) {
@@ -2196,6 +2368,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
           {WIZARD_STEPS.map((s, i) => <div key={s} onClick={() => goTo(i)} style={{ flex: 1, height: 5, borderRadius: 3, cursor: i <= maxStep ? 'pointer' : 'default', background: i < step ? 'var(--green)' : i === step ? 'var(--btb-gold)' : 'var(--border)' }} />)}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>Step {step + 1} of {WIZARD_STEPS.length} · <strong style={{ color: 'var(--text)' }}>{WIZARD_STEPS[step]}</strong></div>
+        {restored && <Note kind="info" style={{ marginBottom: 12 }}>We saved your unfinished form. Photos and documents need to be added again. <button type="button" onClick={startOver} style={{ background: 'none', border: 'none', color: 'var(--btb-gold)', cursor: 'pointer', padding: 0, fontSize: 'inherit' }}>Start over</button></Note>}
         {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
 
         {step === 0 && (
@@ -2447,6 +2620,9 @@ function ParentDashboard({ club, profile, setPage }) {
   const [me, setMe] = useState(profile)
   const [showAbs, setShowAbs] = useState(false)
   const [absences, setAbsences] = useState([])
+  const [sessions, setSessions] = useState([])
+  const [attRows, setAttRows] = useState([])
+  const [showContact, setShowContact] = useState(false)
 
   const load = useCallback(async () => {
     const [{ data: links }, { data: f }, { data: fx }, { data: fresh }, { data: ab }] = await Promise.all([
@@ -2461,6 +2637,12 @@ function ParentDashboard({ club, profile, setPage }) {
     setChildren((links || []).map(l => ({ ...l.player, relationship: l.relationship })).filter(p => p && p.id))
     setFees(f || [])
     setNext(fx || [])
+    const kidIds = (links || []).map(l => l.player?.id).filter(Boolean)
+    const [{ data: ss }, { data: at }] = await Promise.all([
+      supabase.from('training_sessions').select('id,title,session_date,venue,training_center_id').eq('club_id', club.id).gte('session_date', new Date().toISOString()).order('session_date').limit(40),
+      kidIds.length ? supabase.from('training_attendance').select('player_id,status').in('player_id', kidIds) : Promise.resolve({ data: [] }),
+    ])
+    setSessions(ss || []); setAttRows(at || [])
     setLoading(false)
   }, [profile.id, club.id])
 
@@ -2479,9 +2661,32 @@ function ParentDashboard({ club, profile, setPage }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {club.whatsapp_group_url && <a className="btn btn-ghost" href={club.whatsapp_group_url} target="_blank" rel="noopener noreferrer">💬 Join team WhatsApp</a>}
           {children.some(c => c.status === 'active') && <button className="btn btn-ghost" onClick={() => setShowAbs(true)}>Report absence</button>}
+          <button className="btn btn-ghost" onClick={() => setShowContact(true)}>My details</button>
           <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add child</button>
         </div>
       </div>
+
+      {children.some(c => c.status === 'active') && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hdr"><div className="card-title">At a glance</div></div>
+          {children.filter(c => c.status === 'active').map(c => {
+            const nextS = sessions.find(x => !x.training_center_id || x.training_center_id === c.training_center_id || c.attends_both)
+            const mine = attRows.filter(a => a.player_id === c.id && a.status !== 'excused')
+            const pct = mine.length ? Math.round(mine.filter(a => a.status === 'present' || a.status === 'late').length / mine.length * 100) : null
+            const due = fees.filter(x => x.player_id === c.id && x.status !== 'paid' && x.status !== 'waived').reduce((t, x) => t + (x.amount - (x.paid_amount || 0)), 0)
+            return (
+              <div key={c.id} style={{ padding: '12px 16px', borderBottom: '0.5px solid var(--border)' }}>
+                <div style={{ fontWeight: 700 }}>{c.full_name}</div>
+                <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 6, fontSize: 12 }}>
+                  <div><div style={{ color: 'var(--text-muted)' }}>Next training</div><div>{nextS ? `${fmtDateTime(nextS.session_date)}${nextS.venue ? ' · ' + nextS.venue : ''}` : 'None scheduled'}</div></div>
+                  <div><div style={{ color: 'var(--text-muted)' }}>Attendance</div><div>{pct == null ? 'No records yet' : pct + '%'}</div></div>
+                  <div><div style={{ color: 'var(--text-muted)' }}>Fees due</div><div style={{ color: due > 0 ? 'var(--red)' : 'var(--green)' }}>{due > 0 ? fmtKES(due) : 'All paid'}</div></div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card-hdr"><div className="card-title">My children</div></div>
@@ -2522,7 +2727,7 @@ function ParentDashboard({ club, profile, setPage }) {
           <div className="card-body" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8, textAlign: 'center' }}>{HOLIDAY_FORMATS.map(([a, f]) => <div key={a}><div style={{ fontSize: 10, color: 'var(--btb-gold)' }}>{a.toUpperCase()}</div><div style={{ fontWeight: 800, fontSize: 18 }}>{f}</div></div>)}</div>
         </div>
         <div className="card">
-          <div className="card-hdr"><div className="card-title">Fees</div></div>
+          <div className="card-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><div className="card-title">Fees</div>{fees.length > 0 && <button className="btn btn-ghost btn-sm" onClick={() => printStatement(fees, club, me.full_name)}>Statement</button>}</div>
           <div className="card-body">
             {fees.length === 0 ? <div className="empty-sub">No fees yet</div> : (
               <>
@@ -2552,6 +2757,7 @@ function ParentDashboard({ club, profile, setPage }) {
         </div>
       </div>
 
+      {showContact && <EditContactModal profile={me} onClose={() => setShowContact(false)} onSaved={() => { setShowContact(false); load() }} />}
       {showAbs && <ReportAbsenceModal club={club} profile={me} kids={children.filter(c => c.status === 'active')} onClose={() => setShowAbs(false)} onSaved={() => { setShowAbs(false); load() }} />}
       {showAdd && <ParentRegistrationWizard club={club} profile={me} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole="parent" onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
