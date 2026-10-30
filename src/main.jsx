@@ -12,8 +12,20 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
 })
 
 const initials = (name = '') => name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short' }) : '—'
-const fmtTime = (d) => { if (!d) return '—'; const t = new Date(d); return (t.getHours() === 0 && t.getMinutes() === 0) ? 'Time TBA' : t.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit' }) }
+const NAIROBI = 'Africa/Nairobi'
+const todayNairobi = () => new Date().toLocaleDateString('en-CA', { timeZone: NAIROBI })
+const asDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? new Date(d + 'T12:00:00Z') : new Date(d)
+const fmtDate = (d) => d ? asDate(d).toLocaleDateString('en-KE', { weekday: 'short', day: 'numeric', month: 'short', timeZone: NAIROBI }) : '—'
+const fmtFullDate = (d) => d ? asDate(d).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric', timeZone: NAIROBI }) : '—'
+// exact age in whole years, by Nairobi calendar date
+const exactAge = (dob) => {
+  if (!dob) return null
+  const [y, m, d] = String(dob).slice(0, 10).split('-').map(Number)
+  const [ty, tm, td] = todayNairobi().split('-').map(Number)
+  let a = ty - y; if (tm < m || (tm === m && td < d)) a--
+  return a
+}
+const fmtTime = (d) => { if (!d) return '—'; const t = new Date(d); return nairobiTime(t) === '00:00' ? 'Time TBA' : t.toLocaleTimeString('en-KE', { hour: '2-digit', minute: '2-digit', timeZone: NAIROBI }) }
 const fmtDateTime = (d) => d ? `${fmtDate(d)} ${fmtTime(d)}` : '—'
 const timeAgo = (d) => { if (!d) return ''; const diff = Date.now() - new Date(d).getTime(); const h = Math.floor(diff / 3600000); if (h < 1) return 'Just now'; if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago` }
 const LOGO = '/bb-logo.jpg'
@@ -56,6 +68,8 @@ if (typeof document !== 'undefined' && !document.getElementById('sp-mobile-fix')
   @media (max-width: 900px) { .page { padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important; } }
   .modal-overlay, .modal-backdrop { z-index: 1100 !important; }
   .modal { background: #111830; opacity: 1 !important; }
+  .avatar { overflow: hidden; flex-shrink: 0; }
+  .avatar img { max-width: 100%; max-height: 100%; object-fit: cover; }
   `
   document.head.appendChild(st)
 }
@@ -67,7 +81,7 @@ const FORMAT_OF = Object.fromEntries(HOLIDAY_FORMATS.map(([a, f]) => ['U' + a.re
 // Age is counted as at 31 December of this year (year-of-birth rule). A manager can override the group.
 const autoAgeGroup = (dob) => {
   if (!dob) return ''
-  const a = new Date().getFullYear() - parseInt(String(dob).slice(0, 4))
+  const a = parseInt(todayNairobi().slice(0, 4)) - parseInt(String(dob).slice(0, 4))
   return a <= 6 ? 'U7' : a <= 8 ? 'U9' : a <= 10 ? 'U11' : a <= 12 ? 'U13' : a <= 14 ? 'U15' : a <= 16 ? 'U17' : a <= 18 ? 'U19' : 'Open'
 }
 const ageGroupOf = (p) => p?.age_group_override || autoAgeGroup(p?.date_of_birth)
@@ -496,7 +510,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
       })
       if (err) { setError(friendly(err.message)); setSaving(false); return }
       if ((club.registration_fee ?? 0) > 0) {
-        await supabase.from('fees').insert({ club_id: club.id, player_id: playerId, description: 'Registration fee (includes two sets of kits)', amount: club.registration_fee, due_date: new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10), status: form.sponsored ? 'waived' : 'unpaid', term: 'Registration', fee_type: 'registration' })
+        await supabase.from('fees').insert({ club_id: club.id, player_id: playerId, description: 'Registration fee (includes two sets of kits)', amount: club.registration_fee, due_date: nairobiDate(Date.now() + 14 * 864e5), status: form.sponsored ? 'waived' : 'unpaid', term: 'Registration', fee_type: 'registration' })
       }
     }
 
@@ -553,7 +567,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
             </div>
             <div className="form-grid">
               <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>{isParent ? "Player's full name *" : 'Player full name *'}</label><input value={form.full_name} onChange={e => set('full_name', e.target.value)} placeholder="e.g. John Kamau Mwangi" maxLength={100} /></div>
-              <div className="form-group"><label>Date of birth{isParent ? ' *' : ''}</label><input type="date" max={new Date().toISOString().slice(0, 10)} value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} /></div>
+              <div className="form-group"><label>Date of birth{isParent ? ' *' : ''}</label><input type="date" max={todayNairobi()} value={form.date_of_birth} onChange={e => set('date_of_birth', e.target.value)} /></div>
               <div className="form-group"><label>Nationality</label><input value={form.nationality} onChange={e => set('nationality', e.target.value)} placeholder="e.g. Kenyan" /></div>
               {isParent && (
                 <div className="form-group"><label>Your relationship</label>
@@ -587,6 +601,7 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
           </div>
         )}
         {editing && <EditChildModal player={player} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onUpdated && onUpdated() }} />}
+        {tab === 'pricing' && <PlayerPricing player={player} club={club} onSaved={() => onUpdated && onUpdated()} />}
         {tab === 'attendance' && <PlayerAttendance player={player} />}
         {tab === 'media' && <PlayerMedia player={player} club={club} canEdit={isStaff} />}
         {tab === 'documents' && (
@@ -706,14 +721,14 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
           </div>
         )}
         <div className="tabs no-scroll">
-          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : []), ...((isStaff || isParent) && player.status === 'active' ? [{ k: 'attendance', l: 'Attendance' }, { k: 'media', l: 'Media' }] : [])].map(t => (
+          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : []), ...((isStaff || isParent) && player.status === 'active' ? [{ k: 'attendance', l: 'Attendance' }, { k: 'media', l: 'Media' }] : []), ...(userRole === 'manager' && player.status !== 'pending' ? [{ k: 'pricing', l: 'Fees' }] : [])].map(t => (
             <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.l}</button>
           ))}
         </div>
         {(isParent || isStaff) && (tab === 'profile' || tab === 'academy') && <div style={{ textAlign: 'right', marginBottom: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Edit details</button></div>}
         {tab === 'profile' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {[{ l: 'Date of birth', v: player.date_of_birth ? new Date(player.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' }) : null }, { l: 'Nationality', v: player.nationality }, { l: 'Age group', v: ageGroupOf(player) }, { l: 'Training centre', v: centerName }, ...(isStaff && player.sponsored ? [{ l: 'Sponsorship', v: player.sponsorship_note || 'Sponsored (fees waived)' }] : []), { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
+            {[{ l: 'Date of birth', v: player.date_of_birth ? `${fmtFullDate(player.date_of_birth)} (age ${exactAge(player.date_of_birth)})` : null }, { l: 'Nationality', v: player.nationality }, { l: 'Age group', v: ageGroupOf(player) }, { l: 'Training centre', v: centerName }, ...(isStaff && player.sponsored ? [{ l: 'Sponsorship', v: player.sponsorship_note || 'Sponsored (fees waived)' }] : []), { l: 'Dominant foot', v: player.dominant_foot }, { l: 'Height', v: player.height_cm ? `${player.height_cm} cm` : null }, { l: 'Weight', v: player.weight_kg ? `${player.weight_kg} kg` : null }, ...(isStaff ? [{ l: 'Contract start', v: player.contract_start ? fmtDate(player.contract_start) : null }, { l: 'Contract end', v: player.contract_end ? fmtDate(player.contract_end) : null }] : [])].map(({ l, v }) => (
               <div key={l}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>
@@ -1767,6 +1782,62 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
   )
 }
 
+function PlayerPricing({ player, club, onSaved }) {
+  const [monthly, setMonthly] = useState(player.custom_monthly_fee ?? '')
+  const [apply, setApply] = useState(true)
+  const [msg, setMsg] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    setBusy(true); setMsg(null)
+    const { data, error } = await supabase.rpc('set_player_price', { p_player: player.id, p_monthly: monthly === '' ? null : parseInt(monthly), p_apply_open: apply })
+    setBusy(false)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) })
+    else { setMsg({ kind: 'ok', text: `Saved.${apply ? ` ${data} unpaid monthly fee${data === 1 ? '' : 's'} updated.` : ''}` }); onSaved() }
+  }
+  return (
+    <div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 10 }}>{msg.text}</Note>}
+      <div style={{ fontSize: 13, marginBottom: 10 }}>Standard monthly fee is <strong>{fmtKES(club.monthly_fee ?? 2500)}</strong>. Set a custom amount for {player.full_name.split(' ')[0]}, or leave it blank to use the standard fee. To change a single fee, use Edit on the Fees page.</div>
+      <FormField label="Custom monthly fee (KES)"><input type="number" min="1" value={monthly} onChange={e => setMonthly(e.target.value)} placeholder="Standard fee" /></FormField>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, margin: '12px 0' }}><input type="checkbox" style={{ width: 'auto' }} checked={apply} onChange={e => setApply(e.target.checked)} /> Also update monthly fees that are still completely unpaid</label>
+      <button className="btn btn-primary" onClick={save} disabled={busy}>{busy ? 'Saving...' : 'Save price'}</button>
+    </div>
+  )
+}
+
+function EditFeeModal({ fee, onClose, onSaved }) {
+  const [f, setF] = useState({ description: fee.description || '', amount: fee.amount ?? '', due_date: fee.due_date || '', waived: fee.status === 'waived' })
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const paid = fee.paid_amount || 0
+  const save = async () => {
+    const amt = parseInt(f.amount)
+    if (f.description.trim().length < 2) { setError('Enter a description'); return }
+    if (isNaN(amt) || amt < 0) { setError('Enter a valid amount'); return }
+    if (!f.waived && amt < paid) { setError(`${fmtKES(paid)} has already been paid, so the amount cannot be lower than that`); return }
+    const status = f.waived ? 'waived' : paid >= amt && amt > 0 ? 'paid' : paid > 0 ? 'partial' : 'unpaid'
+    setSaving(true); setError('')
+    const { error: err } = await supabase.from('fees').update({ description: f.description.trim(), amount: amt, due_date: f.due_date || null, status }).eq('id', fee.id)
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title={`Edit fee · ${fee.player?.full_name || ''}`} onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="form-grid">
+          <FormField label="Description *" full><input value={f.description} onChange={e => set('description', e.target.value)} maxLength={150} /></FormField>
+          <FormField label="Amount (KES) *"><input type="number" min="0" value={f.amount} onChange={e => set('amount', e.target.value)} /></FormField>
+          <FormField label="Due date"><input type="date" value={f.due_date} onChange={e => set('due_date', e.target.value)} /></FormField>
+        </div>
+        {paid > 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>Already paid: {fmtKES(paid)}</div>}
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginTop: 12 }}><input type="checkbox" style={{ width: 'auto' }} checked={f.waived} onChange={e => set('waived', e.target.checked)} /> Waived (sponsored or forgiven)</label>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+    </Modal>
+  )
+}
+
 function TrainingPage({ club, userRole, profile }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1870,6 +1941,7 @@ function FeesPage({ club }) {
   const [players, setPlayers] = useState([])
   const [centers, setCenters] = useState([])
   const [payFee, setPayFee] = useState(null)
+  const [editFee, setEditFee] = useState(null)
   const [msg, setMsg] = useState(null)
   const [busy, setBusy] = useState(false)
   const [settings, setSettings] = useState({ registration_fee: club.registration_fee ?? 2500, monthly_fee: club.monthly_fee ?? 2500 })
@@ -1890,7 +1962,7 @@ function FeesPage({ club }) {
 
   const generate = async () => {
     setBusy(true); setMsg(null)
-    const { data, error } = await supabase.rpc('generate_monthly_fees', { p_month: new Date().toISOString().slice(0, 10) })
+    const { data, error } = await supabase.rpc('generate_monthly_fees', { p_month: todayNairobi() })
     setBusy(false)
     if (error) setMsg({ kind: 'error', text: friendly(error.message) })
     else { setMsg({ kind: 'ok', text: data === 0 ? 'This month\'s fees were already generated.' : `Created ${data} monthly fee${data === 1 ? '' : 's'} (sponsored players are marked waived).` }); load() }
@@ -1972,6 +2044,7 @@ function FeesPage({ club }) {
                         {remindLink(f) && <><a className="btn btn-ghost btn-sm" href={remindLink(f)} target="_blank" rel="noreferrer">Remind</a>{' '}</>}
                         <button className="btn btn-ghost btn-sm" onClick={() => waive(f)}>Waive</button>
                       </>}
+                      <button className="btn btn-ghost btn-sm" onClick={() => setEditFee(f)}>Edit</button>{' '}
                       {(f.paid_amount || 0) > 0 && <button className="btn btn-ghost btn-sm" onClick={() => printReceipt(f, club)}>Receipt</button>}
                     </td>
                   </tr>
@@ -1992,6 +2065,7 @@ function FeesPage({ club }) {
         </div>
       </div>
       {showAdd && <AddFeeModal club={club} players={players} centers={centers} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      {editFee && <EditFeeModal fee={editFee} onClose={() => setEditFee(null)} onSaved={() => { setEditFee(null); load() }} />}
       {payFee && <PaymentModal fee={payFee} onClose={() => setPayFee(null)} onSaved={() => { setPayFee(null); load() }} />}
     </div>
   )
@@ -2403,7 +2477,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
   const setGv = (k, v) => setG(p => ({ ...p, [k]: v }))
   const setCv = (k, v) => setC(p => ({ ...p, [k]: v }))
   const docTypes = DOC_TYPES.filter(d => !d.staffOnly)
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayNairobi()
   const DRAFT_KEY = `sp-draft-${profile.id}`
   const [restored, setRestored] = useState(false)
   useEffect(() => {
@@ -2549,7 +2623,7 @@ function ParentRegistrationWizard({ club, profile, onClose, onSaved }) {
             </div>
             <div className="form-grid">
               <FormField label="Player's full name (the child) *" full><input value={c.full_name} onChange={e => setCv('full_name', e.target.value)} maxLength={100} /></FormField>
-              <FormField label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} />{c.date_of_birth && c.date_of_birth <= today && <div style={{ fontSize: 12, color: 'var(--btb-gold)', marginTop: 4 }}>Age group: <strong>{autoAgeGroup(c.date_of_birth)}</strong>{FORMAT_OF[autoAgeGroup(c.date_of_birth)] ? ` · ${FORMAT_OF[autoAgeGroup(c.date_of_birth)]} matches` : ''}</div>}</FormField>
+              <FormField label="Date of birth *"><input type="date" max={today} value={c.date_of_birth} onChange={e => setCv('date_of_birth', e.target.value)} />{c.date_of_birth && c.date_of_birth <= today && <div style={{ fontSize: 12, color: 'var(--btb-gold)', marginTop: 4 }}>Age {exactAge(c.date_of_birth)} · Age group: <strong>{autoAgeGroup(c.date_of_birth)}</strong>{FORMAT_OF[autoAgeGroup(c.date_of_birth)] ? ` · ${FORMAT_OF[autoAgeGroup(c.date_of_birth)]} matches` : ''}</div>}</FormField>
               <FormField label="Nationality"><input value={c.nationality} onChange={e => setCv('nationality', e.target.value)} /></FormField>
               <FormField label="Preferred position *"><select value={c.position} onChange={e => setCv('position', e.target.value)}><option value="">Select</option>{['Goalkeeper', 'Defender', 'Midfielder', 'Forward'].map(p => <option key={p}>{p}</option>)}</select></FormField>
               <FormField label="Position detail"><input value={c.position_detail} onChange={e => setCv('position_detail', e.target.value)} placeholder="e.g. Right Wing" /></FormField>
@@ -2841,7 +2915,7 @@ function ParentDashboard({ club, profile, setPage }) {
             </div>
           : children.map(c => (
             <div key={c.id} onClick={() => setSelected(c)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', borderBottom: '0.5px solid var(--border)', cursor: 'pointer' }}>
-              <div className="avatar">{c.photo_url ? <img src={c.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : initials(c.full_name)}</div>
+              <div className="avatar" style={{ width: 56, height: 56, minWidth: 56, overflow: 'hidden', flexShrink: 0 }}>{c.photo_url ? <img src={c.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : initials(c.full_name)}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 14 }}>{c.full_name}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{c.squad_number ? `#${c.squad_number} · ` : ''}{c.position_detail || c.position || 'Position not set'}</div>
@@ -2933,14 +3007,14 @@ function ApprovalsPage({ club, profile, onChanged }) {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { supabase.from('training_centers').select('id,name').eq('club_id', club.id).eq('is_active', true).order('name').then(({ data }) => setCenters(data || [])) }, [club.id])
-  const optOf = (p) => ({ center: p.training_center_id || '', sponsored: false, note: '', ageGroup: '', ...(opts[p.id] || {}) })
+  const optOf = (p) => ({ center: p.training_center_id || '', sponsored: false, note: '', ageGroup: '', regFee: '', monthFee: '', ...(opts[p.id] || {}) })
   const setOpt = (p, k, v) => setOpts(o => ({ ...o, [p.id]: { ...optOf(p), [k]: v } }))
 
   const approve = async (p) => {
     setBusy(p.id); setError('')
     const sq = squadNo[p.id]; const o = optOf(p)
     if (!o.center) { setBusy(''); setError('Choose a training centre first'); return }
-    const { error: err } = await supabase.rpc('approve_player', { p_player: p.id, p_squad_number: sq ? parseInt(sq) : null, p_center: o.center, p_sponsored: o.sponsored, p_note: o.note || null, p_age_group: o.ageGroup || null })
+    const { error: err } = await supabase.rpc('approve_player', { p_player: p.id, p_squad_number: sq ? parseInt(sq) : null, p_center: o.center, p_sponsored: o.sponsored, p_note: o.note || null, p_age_group: o.ageGroup || null, p_registration_fee: o.regFee !== '' ? parseInt(o.regFee) : null, p_monthly_fee: o.monthFee !== '' ? parseInt(o.monthFee) : null })
     setBusy('')
     if (err) { setError(err.message.includes('duplicate') ? 'That squad number is already taken' : err.message); return }
     const par = p.links?.[0]?.parent
@@ -2985,11 +3059,11 @@ function ApprovalsPage({ club, profile, onChanged }) {
             <div key={p.id} className="card" style={{ marginBottom: 12 }}>
               <div className="card-body">
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <div className="avatar">{p.photo_url ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : initials(p.full_name)}</div>
+                  <div className="avatar" style={{ width: 56, height: 56, minWidth: 56, overflow: 'hidden', flexShrink: 0 }}>{p.photo_url ? <img src={p.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} /> : initials(p.full_name)}</div>
                   <div style={{ flex: 1, minWidth: 180 }}>
                     <div style={{ fontWeight: 700, fontSize: 15 }}>{p.full_name}</div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {p.date_of_birth ? `Born ${new Date(p.date_of_birth).toLocaleDateString('en-KE', { day: 'numeric', month: 'short', year: 'numeric' })} · ${autoAgeGroup(p.date_of_birth)}` : 'No date of birth'}
+                      {p.date_of_birth ? `Born ${fmtFullDate(p.date_of_birth)} · age ${exactAge(p.date_of_birth)} · ${autoAgeGroup(p.date_of_birth)}` : 'No date of birth'}
                       {p.position ? ` · ${p.position}` : ''}{p.school_name ? ` · ${p.school_name}` : ''}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -3012,6 +3086,8 @@ function ApprovalsPage({ club, profile, onChanged }) {
                     <select value={optOf(p).center} onChange={e => setOpt(p, 'center', e.target.value)} style={{ minWidth: 180 }}><option value="">Training centre</option>{centers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select>
                     <select value={optOf(p).ageGroup} onChange={e => setOpt(p, 'ageGroup', e.target.value)} title="Age group"><option value="">Age group: {autoAgeGroup(p.date_of_birth) || '—'} (auto)</option>{AGE_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}</select>
                     <input type="number" min="0" max="99" placeholder="Squad #" value={squadNo[p.id] || ''} onChange={e => setSquadNo(s => ({ ...s, [p.id]: e.target.value }))} style={{ width: 90 }} />
+                    <input type="number" min="0" placeholder={`Reg. fee (${club.registration_fee ?? 2500})`} value={optOf(p).regFee} onChange={e => setOpt(p, 'regFee', e.target.value)} style={{ width: 130 }} title="Leave blank for the standard registration fee" />
+                    <input type="number" min="1" placeholder={`Monthly (${club.monthly_fee ?? 2500})`} value={optOf(p).monthFee} onChange={e => setOpt(p, 'monthFee', e.target.value)} style={{ width: 130 }} title="Leave blank for the standard monthly fee" />
                     <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}><input type="checkbox" style={{ width: 'auto' }} checked={optOf(p).sponsored} onChange={e => setOpt(p, 'sponsored', e.target.checked)} /> Sponsored (waive fees)</label>
                     {optOf(p).sponsored && <input placeholder="Sponsor / note" value={optOf(p).note} onChange={e => setOpt(p, 'note', e.target.value)} style={{ minWidth: 150 }} />}
                     <button className="btn btn-primary btn-sm" disabled={busy === p.id} onClick={() => approve(p)}>{busy === p.id ? 'Saving...' : '✓ Approve'}</button>
