@@ -50,6 +50,8 @@ if (typeof document !== 'undefined' && !document.getElementById('sp-pwa')) {
   add('link', { id: 'sp-pwa', rel: 'manifest', href: '/manifest.webmanifest' })
   add('link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' })
   add('link', { rel: 'icon', type: 'image/png', href: '/icon-192.png' })
+  add('link', { rel: 'preconnect', href: 'https://fonts.googleapis.com' })
+  add('link', { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap' })
   add('meta', { name: 'theme-color', content: '#0a0f1e' })
   add('meta', { name: 'apple-mobile-web-app-capable', content: 'yes' })
   add('meta', { name: 'mobile-web-app-capable', content: 'yes' })
@@ -68,6 +70,33 @@ if (typeof document !== 'undefined' && !document.getElementById('sp-mobile-fix')
   @media (max-width: 900px) { .page { padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important; } }
   .modal-overlay, .modal-backdrop { z-index: 1100 !important; }
   .modal { background: #111830; opacity: 1 !important; }
+  :root { --text-muted: #a9b4cc; --text-dim: #8591ad; }
+  body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  .nav-icon, .bottom-nav-icon { display: inline-flex; align-items: center; justify-content: center; font-size: 0; }
+  .nav-icon svg, .bottom-nav-icon svg { display: block; }
+  .rc { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--bg-card, #111830); border: 1px solid var(--border, rgba(255,255,255,0.09)); border-radius: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .rc-time { min-width: 62px; text-align: center; }
+  .rc-time b { display: block; font-size: 18px; font-weight: 700; }
+  .rc-time span { font-size: 11px; color: var(--text-muted); }
+  .rc-main { flex: 1 1 200px; min-width: 0; }
+  .rc-title { font-weight: 600; font-size: 15px; }
+  .rc-sub { font-size: 12px; color: var(--text-muted); margin-top: 3px; line-height: 1.4; }
+  .rc-side { text-align: right; min-width: 90px; }
+  .rc-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid currentColor; }
+  .tag i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+  .day-hdr { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); margin: 20px 4px 8px; }
+  .skel { background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.10), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: spShimmer 1.2s infinite; border-radius: 12px; height: 70px; margin-bottom: 10px; }
+  @keyframes spShimmer { to { background-position: -200% 0; } }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .tile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 16px; border-radius: 14px; cursor: pointer; background: var(--bg-card, #111830); border: 1px solid var(--border, rgba(255,255,255,0.09)); color: var(--text, #fff); font-family: inherit; }
+  .tile.hot { border-color: var(--btb-gold, #e0b43c); background: rgba(224,180,60,0.08); }
+  .tile-ico { color: var(--text-muted); }
+  .tile.hot .tile-ico { color: var(--btb-gold, #e0b43c); }
+  .tile-val { font-size: 24px; font-weight: 700; line-height: 1.1; margin-top: 6px; }
+  .tile-lbl { font-size: 12px; color: var(--text-muted); }
+  .bottom-nav-item { min-height: 56px; }
+  @media (max-width: 900px) { .btn { min-height: 42px; } .btn-sm { min-height: 38px; } input, select, textarea { font-size: 16px; } }
   @media (min-width: 901px) {
     .app-shell { display: flex !important; min-height: 100vh; }
     .sidebar { position: sticky !important; top: 0; left: auto; height: 100vh; flex: 0 0 260px; width: 260px; transform: none !important; display: flex; flex-direction: column; overflow: hidden; }
@@ -326,12 +355,7 @@ function ManagerDashboard({ club, profile, setPage }) {
           <div className="page-sub">{club.name} · {new Date().toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
         </div>
       </div>
-      {stats.pending > 0 && (
-        <Note kind="warn" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <span><strong>{stats.pending}</strong> player registration{stats.pending === 1 ? '' : 's'} waiting for approval</span>
-          <button className="btn btn-primary btn-sm" onClick={() => setPage('approvals')}>Review</button>
-        </Note>
-      )}
+      <AttentionTiles club={club} pending={stats.pending} setPage={setPage} />
       {liveFixture && (
         <div className="alert alert-green" style={{ marginBottom: 16 }}>
           <div className="live-pulse"></div>
@@ -1375,14 +1399,14 @@ function AbsencesPage({ club, profile }) {
 
   const shown = rows.filter(r => view === 'upcoming' ? r.date_to >= today : r.date_to < today)
   if (view === 'past') shown.reverse()
-  if (loading) return <Spinner />
+  if (loading) return <PageSkeleton rows={3} />
 
   return (
     <div className="page">
       <div className="page-hdr"><div><div className="page-title">Absences</div><div className="page-sub">Reported by parents</div></div></div>
       {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
       <div className="filter-pills">{[['upcoming', 'Current & upcoming'], ['past', 'Past']].map(([k, l]) => <button key={k} className={`pill ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>{l}</button>)}</div>
-      {shown.length === 0 ? <div className="empty"><div className="empty-title">No absence reports</div></div> : shown.map(r => (
+      {shown.length === 0 ? <EmptyState icon="userx" title="No absence reports" sub="When a parent reports an absence it will show here." /> : shown.map(r => (
         <div key={r.id} className="card" style={{ marginBottom: 10 }}>
           <div className="card-body" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: 200 }}>
@@ -1847,6 +1871,92 @@ function EditFeeModal({ fee, onClose, onSaved }) {
   )
 }
 
+// ---------- Design system pieces: icons, empty states, skeletons, attention tiles
+const ICON_PATHS = {
+  home: <><path d="M3 11l9-8 9 8" /><path d="M5 10v10h14V10" /></>,
+  check: <><circle cx="12" cy="12" r="9" /><path d="M8 12.5l3 3 5-6" /></>,
+  users: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6" /><circle cx="17.5" cy="9" r="2.5" /><path d="M17 14c3 0 4.5 2 4.5 5" /></>,
+  calendar: <><rect x="3.5" y="5" width="17" height="15" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>,
+  ball: <><circle cx="12" cy="12" r="9" /><path d="M12 8l3.5 2.5-1.3 4h-4.4l-1.3-4z" /><path d="M12 3v5M20.5 9.5l-5-1M3.5 9.5l5-1M17.5 19l-3.3-4.5M6.5 19l3.3-4.5" /></>,
+  pulse: <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />,
+  userx: <><circle cx="10" cy="8" r="3.5" /><path d="M3 20c0-3.5 3-6 7-6" /><path d="M15 15l5 5M20 15l-5 5" /></>,
+  wallet: <><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18" /><circle cx="16.5" cy="14.5" r="1" /></>,
+  message: <path d="M4 5h16v11H9l-5 4z" />,
+  chart: <path d="M4 20V11M10 20V4M16 20v-6M22 20H2" />,
+  shield: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />,
+  more: <><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  pin: <><path d="M12 21s-6.5-5.5-6.5-11a6.5 6.5 0 0113 0c0 5.5-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></>,
+  inbox: <><path d="M3 13l3-8h12l3 8" /><path d="M3 13v6h18v-6h-5l-1.5 2.5h-5L8 13z" /></>,
+}
+function Icon({ name, size = 20 }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">{ICON_PATHS[name]}</svg>
+}
+
+const CENTRE_COLORS = ['#5b8cff', '#e0b43c', '#3fb97e', '#b184f5']
+const centreColor = (name = '') => { let h = 0; for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 997; return CENTRE_COLORS[h % CENTRE_COLORS.length] }
+
+function EmptyState({ icon = 'inbox', title, sub, action }) {
+  return (
+    <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-muted)' }}>
+      <div style={{ opacity: 0.6, marginBottom: 10 }}><Icon name={icon} size={36} /></div>
+      <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>{title}</div>
+      {sub && <div style={{ fontSize: 13, marginBottom: action ? 14 : 0 }}>{sub}</div>}
+      {action}
+    </div>
+  )
+}
+
+function PageSkeleton({ rows = 5 }) {
+  return (
+    <div className="page" aria-busy="true">
+      <div className="skel" style={{ height: 34, width: 200, marginBottom: 8 }} />
+      <div className="skel" style={{ height: 16, width: 280, marginBottom: 22 }} />
+      {Array.from({ length: rows }).map((_, i) => <div key={i} className="skel" />)}
+    </div>
+  )
+}
+
+function AttentionTiles({ club, pending, setPage }) {
+  const [t, setT] = useState(null)
+  useEffect(() => {
+    const today = todayNairobi()
+    const next = nairobiDate(Date.now() + 864e5)
+    Promise.all([
+      supabase.from('fees').select('amount,paid_amount').eq('club_id', club.id).in('status', ['unpaid', 'partial']).lt('due_date', today),
+      supabase.from('training_sessions').select('id', { count: 'exact', head: true }).eq('club_id', club.id).gte('session_date', `${today}T00:00:00+03:00`).lt('session_date', `${next}T00:00:00+03:00`),
+      supabase.from('absence_reports').select('id', { count: 'exact', head: true }).eq('club_id', club.id).eq('status', 'reported').gte('date_to', today),
+    ]).then(([{ data: f }, { count: s }, { count: a }]) => {
+      const od = f || []
+      setT({ overdueN: od.length, overdueSum: od.reduce((x, y) => x + (y.amount - (y.paid_amount || 0)), 0), sessions: s || 0, absences: a || 0 })
+    })
+  }, [club.id])
+  const tiles = [
+    { icon: 'check', label: 'Registrations to approve', value: pending, page: 'approvals', hot: pending > 0 },
+    { icon: 'wallet', label: t ? `Overdue fees (${t.overdueN})` : 'Overdue fees', value: t ? fmtKES(t.overdueSum) : '…', page: 'fees', hot: t && t.overdueN > 0 },
+    { icon: 'pulse', label: "Today's training", value: t ? t.sessions : '…', page: 'training', hot: false },
+    { icon: 'userx', label: 'New absence reports', value: t ? t.absences : '…', page: 'absences', hot: t && t.absences > 0 },
+  ]
+  return (
+    <div className="tiles">
+      {tiles.map(x => (
+        <button key={x.label} className={`tile ${x.hot ? 'hot' : ''}`} onClick={() => setPage(x.page)}>
+          <span className="tile-ico"><Icon name={x.icon} size={20} /></span>
+          <span className="tile-val">{x.value}</span>
+          <span className="tile-lbl">{x.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const dayLabel = (k) => {
+  const nice = asDate(k).toLocaleDateString('en-KE', { weekday: 'long', day: 'numeric', month: 'long', timeZone: NAIROBI })
+  if (k === todayNairobi()) return 'Today · ' + nice
+  if (k === nairobiDate(Date.now() + 864e5)) return 'Tomorrow · ' + nice
+  return nice
+}
+
 function TrainingPage({ club, userRole, profile }) {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1868,7 +1978,7 @@ function TrainingPage({ club, userRole, profile }) {
   const shownSessions = sessions.filter(s => view === 'upcoming' ? new Date(s.session_date) >= startOfToday : new Date(s.session_date) < startOfToday)
   if (view === 'past') shownSessions.reverse()
 
-  if (loading) return <Spinner />
+  if (loading) return <PageSkeleton />
 
   return (
     <div className="page">
@@ -1878,28 +1988,34 @@ function TrainingPage({ club, userRole, profile }) {
       </div>
       <div className="filter-pills">{[['upcoming', 'Upcoming'], ['past', 'Past']].map(([k, l]) => <button key={k} className={`pill ${view === k ? 'active' : ''}`} onClick={() => setView(k)}>{l}</button>)}</div>
       {shownSessions.length === 0
-        ? <div className="empty"><div className="empty-title">No training sessions</div><div className="empty-sub">Schedule your first training session</div></div>
-        : (
-          <div className="card">
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Date</th><th>Session</th><th>Type</th><th>Duration</th><th>Venue</th>{isStaffT && <th></th>}</tr></thead>
-                <tbody>
-                  {shownSessions.map(s => (
-                    <tr key={s.id}>
-                      <td>{fmtDateTime(s.session_date)}</td>
-                      <td><strong>{s.title}</strong>{s.notes && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{s.notes}</div>}</td>
-                      <td><span className="badge badge-blue">{s.session_type}</span></td>
-                      <td>{s.duration_mins ? `${s.duration_mins} min` : '—'}</td>
-                      <td>{s.venue || '—'}</td>
-                      {isStaffT && <td><button className="btn btn-ghost btn-sm" onClick={() => setAttSession(s)}>Attendance</button></td>}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        ? <EmptyState icon="calendar" title={view === 'upcoming' ? 'No upcoming sessions' : 'No past sessions'} sub={isStaffT && view === 'upcoming' ? 'Schedule the next training session.' : undefined} action={isStaffT && view === 'upcoming' ? <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add session</button> : null} />
+        : (() => {
+          const groups = []
+          shownSessions.forEach(x => { const k = nairobiDate(x.session_date); let g = groups[groups.length - 1]; if (!g || g.k !== k) { g = { k, items: [] }; groups.push(g) } g.items.push(x) })
+          return groups.map(g => (
+            <div key={g.k}>
+              <div className="day-hdr">{dayLabel(g.k)}</div>
+              {g.items.map(x => {
+                const tm = nairobiTime(x.session_date)
+                const title = x.title.replace(/^Training\s*·\s*/, '') || x.title
+                return (
+                  <div key={x.id} className="rc">
+                    <div className="rc-time"><b>{tm === '00:00' ? 'TBA' : tm}</b><span>{x.duration_mins ? `${x.duration_mins} min` : ''}</span></div>
+                    <div className="rc-main">
+                      <div className="rc-title">{title}</div>
+                      {x.notes && <div className="rc-sub">{x.notes}</div>}
+                      <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {x.venue && <span className="tag" style={{ color: centreColor(x.venue) }}><i />{x.venue}</span>}
+                        {x.session_type && <span className="tag" style={{ color: 'var(--text-muted)' }}>{String(x.session_type).replace('_', ' ')}</span>}
+                      </div>
+                    </div>
+                    {isStaffT && <button className="btn btn-ghost btn-sm" onClick={() => setAttSession(x)}>Attendance</button>}
+                  </div>
+                )
+              })}
             </div>
-          </div>
-        )}
+          ))
+        })()}
       {attMsg && <Note kind="ok" style={{ marginTop: 12 }}>{attMsg}</Note>}
       {attSession && <AttendanceModal club={club} profile={profile} session={attSession} onClose={() => setAttSession(null)} onSaved={(m) => { setAttSession(null); setAttMsg(typeof m === 'string' ? m : 'Attendance saved'); setTimeout(() => setAttMsg(''), 6000) }} />}
       {showAdd && <AddTrainingModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
@@ -2004,7 +2120,7 @@ function FeesPage({ club }) {
   const shown = feeSearch ? byStatus.filter(f => (f.player?.full_name || '').toLowerCase().includes(feeSearch.toLowerCase())) : byStatus
   const exportFees = () => downloadCsv('fees.csv', [['Player', 'Centre', 'Description', 'Type', 'Amount', 'Paid', 'Balance', 'Status', 'Due', 'Method', 'Reference'], ...fees.map(f => [f.player?.full_name, centers.find(c => c.id === f.player?.training_center_id)?.name, f.description, f.fee_type, f.amount, f.paid_amount || 0, feeBalance(f), f.status, f.due_date, f.payment_method, f.mpesa_ref])])
 
-  if (loading) return <Spinner />
+  if (loading) return <PageSkeleton />
 
   return (
     <div className="page">
@@ -2027,42 +2143,34 @@ function FeesPage({ club }) {
       <div className="filter-pills">
         {[['open', 'Outstanding'], ['paid', 'Paid'], ['waived', 'Waived'], ['all', 'All']].map(([k, l]) => <button key={k} className={`pill ${filter === k ? 'active' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}
       </div>
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Player</th><th>Description</th><th>Amount</th><th>Paid</th><th>Due</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              {shown.length === 0
-                ? <tr><td colSpan={7}><div className="empty"><div className="empty-sub">Nothing here</div></div></td></tr>
-                : shown.slice(0, feeLimit).map(f => (
-                  <tr key={f.id}>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div className="avatar avatar-sm">{initials(f.player?.full_name)}</div>
-                        <div><div style={{ fontWeight: 600, fontSize: 13 }}>{f.player?.full_name || '—'}</div><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{f.player?.sponsored ? 'Sponsored' : f.term || ''}</div></div>
-                      </div>
-                    </td>
-                    <td>{f.description}</td>
-                    <td>{fmtKES(f.amount)}</td>
-                    <td>{fmtKES(f.paid_amount)}</td>
-                    <td>{fmtDate(f.due_date)}</td>
-                    <td><span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`}>{f.status}</span></td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      {f.status !== 'paid' && f.status !== 'waived' && <>
-                        <button className="btn btn-primary btn-sm" onClick={() => setPayFee(f)}>Record payment</button>{' '}
-                        {remindLink(f) && <><a className="btn btn-ghost btn-sm" href={remindLink(f)} target="_blank" rel="noreferrer">Remind</a>{' '}</>}
-                        <button className="btn btn-ghost btn-sm" onClick={() => waive(f)}>Waive</button>
-                      </>}
-                      <button className="btn btn-ghost btn-sm" onClick={() => setEditFee(f)}>Edit</button>{' '}
-                      {(f.paid_amount || 0) > 0 && <button className="btn btn-ghost btn-sm" onClick={() => printReceipt(f, club)}>Receipt</button>}
-                    </td>
-                  </tr>
-                ))}
-              {shown.length > feeLimit && <tr><td colSpan={7} style={{ textAlign: 'center' }}><button className="btn btn-ghost btn-sm" onClick={() => setFeeLimit(l => l + 50)}>Show more ({shown.length - feeLimit} left)</button></td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {shown.length === 0
+        ? <EmptyState icon="wallet" title="Nothing here" sub={filter === 'open' ? 'No outstanding fees. Everyone is up to date.' : 'No fees match this view.'} />
+        : <div style={{ marginBottom: 16 }}>
+          {shown.slice(0, feeLimit).map(f => (
+            <div key={f.id} className="rc">
+              <div className="avatar avatar-sm">{initials(f.player?.full_name)}</div>
+              <div className="rc-main">
+                <div className="rc-title">{f.player?.full_name || '—'}</div>
+                <div className="rc-sub">{f.description}{f.due_date ? ` · due ${fmtDate(f.due_date)}` : ''}{f.player?.sponsored ? ' · Sponsored' : ''}</div>
+              </div>
+              <div className="rc-side">
+                <div style={{ fontWeight: 700 }}>{fmtKES(f.amount)}</div>
+                {(f.paid_amount || 0) > 0 && <div className="rc-sub">paid {fmtKES(f.paid_amount)}</div>}
+              </div>
+              <span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`}>{f.status}</span>
+              <div className="rc-actions">
+                {f.status !== 'paid' && f.status !== 'waived' && <>
+                  <button className="btn btn-primary btn-sm" onClick={() => setPayFee(f)}>Record payment</button>
+                  {remindLink(f) && <a className="btn btn-ghost btn-sm" href={remindLink(f)} target="_blank" rel="noreferrer">Remind</a>}
+                  <button className="btn btn-ghost btn-sm" onClick={() => waive(f)}>Waive</button>
+                </>}
+                <button className="btn btn-ghost btn-sm" onClick={() => setEditFee(f)}>Edit</button>
+                {(f.paid_amount || 0) > 0 && <button className="btn btn-ghost btn-sm" onClick={() => printReceipt(f, club)}>Receipt</button>}
+              </div>
+            </div>
+          ))}
+          {shown.length > feeLimit && <div style={{ textAlign: 'center' }}><button className="btn btn-ghost btn-sm" onClick={() => setFeeLimit(l => l + 50)}>Show more ({shown.length - feeLimit} left)</button></div>}
+        </div>}
       <div className="card">
         <div className="card-hdr"><div className="card-title">Fee amounts</div></div>
         <div className="card-body">
@@ -3224,41 +3332,43 @@ function App() {
 
   const navItems = {
     manager: [
-      { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
-      { id: 'approvals', label: 'Approvals', icon: '✅' },
-      { id: 'squad', label: 'Squad', icon: '👥' },
-      { id: 'fixtures', label: 'Fixtures', icon: '📅' },
-      { id: 'match-centre', label: 'Match Centre', icon: '⚽' },
-      { id: 'training', label: 'Training', icon: '🏃' },
-      { id: 'absences', label: 'Absences', icon: '🤒' },
-      { id: 'fees', label: 'Fees', icon: '💰' },
-      { id: 'messages', label: 'Messages', icon: '💬' },
-      { id: 'analytics', label: 'Analytics', icon: '📊' },
-      { id: 'staff', label: 'Coaches', icon: '🧑‍🏫' },
+      { id: 'dashboard', label: 'Dashboard', icon: <Icon name="home" /> },
+      { id: 'approvals', label: 'Approvals', icon: <Icon name="check" /> },
+      { id: 'squad', label: 'Squad', icon: <Icon name="users" /> },
+      { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
+      { id: 'match-centre', label: 'Match Centre', icon: <Icon name="ball" /> },
+      { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
+      { id: 'absences', label: 'Absences', icon: <Icon name="userx" /> },
+      { id: 'fees', label: 'Fees', icon: <Icon name="wallet" /> },
+      { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
+      { id: 'analytics', label: 'Analytics', icon: <Icon name="chart" /> },
+      { id: 'staff', label: 'Coaches', icon: <Icon name="shield" /> },
     ],
     coach: [
-      { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
-      { id: 'squad', label: 'Squad', icon: '👥' },
-      { id: 'fixtures', label: 'Fixtures', icon: '📅' },
-      { id: 'match-centre', label: 'Match Centre', icon: '⚽' },
-      { id: 'training', label: 'Training', icon: '🏃' },
-      { id: 'absences', label: 'Absences', icon: '🤒' },
-      { id: 'messages', label: 'Messages', icon: '💬' },
+      { id: 'dashboard', label: 'Dashboard', icon: <Icon name="home" /> },
+      { id: 'squad', label: 'Squad', icon: <Icon name="users" /> },
+      { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
+      { id: 'match-centre', label: 'Match Centre', icon: <Icon name="ball" /> },
+      { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
+      { id: 'absences', label: 'Absences', icon: <Icon name="userx" /> },
+      { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
     ],
     player: [
-      { id: 'fixtures', label: 'Fixtures', icon: '📅' },
-      { id: 'training', label: 'Training', icon: '🏃' },
-      { id: 'messages', label: 'Messages', icon: '💬' },
+      { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
+      { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
+      { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
     ],
     parent: [
-      { id: 'parent-dashboard', label: 'My Children', icon: '👨‍👧' },
-      { id: 'fixtures', label: 'Fixtures', icon: '📅' },
-      { id: 'training', label: 'Training', icon: '🏃' },
-      { id: 'messages', label: 'Messages', icon: '💬' },
+      { id: 'parent-dashboard', label: 'My Children', icon: <Icon name="users" /> },
+      { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
+      { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
+      { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
     ],
   }
 
   const items = navItems[profile.role] || navItems.player
+  const MAIN_IDS = { manager: ['dashboard', 'approvals', 'training', 'fees'], coach: ['dashboard', 'squad', 'training', 'match-centre'], parent: ['parent-dashboard', 'fixtures', 'training', 'messages'] }
+  const mainItems = MAIN_IDS[profile.role] ? MAIN_IDS[profile.role].map(id => items.find(i => i.id === id)).filter(Boolean) : items.slice(0, 4)
 
   const renderPage = () => {
     switch (page) {
@@ -3321,12 +3431,18 @@ function App() {
         <div className="content-area">{renderPage()}</div>
       </div>
       <nav className="bottom-nav">
-        {items.slice(0, 5).map(item => (
+        {mainItems.map(item => (
           <button key={item.id} className={`bottom-nav-item ${page === item.id ? 'active' : ''}`} onClick={() => setPage(item.id)}>
             <span className="bottom-nav-icon">{item.icon}</span>
             <span className="bottom-nav-label">{item.label}</span>
           </button>
         ))}
+        {items.length > mainItems.length && (
+          <button className={`bottom-nav-item ${items.some(i => i.id === page) && !mainItems.some(i => i.id === page) ? 'active' : ''}`} onClick={() => setSidebarOpen(true)}>
+            <span className="bottom-nav-icon"><Icon name="more" /></span>
+            <span className="bottom-nav-label">More</span>
+          </button>
+        )}
       </nav>
     </div>
   )
