@@ -68,6 +68,15 @@ if (typeof document !== 'undefined' && !document.getElementById('sp-mobile-fix')
   @media (max-width: 900px) { .page { padding-bottom: calc(96px + env(safe-area-inset-bottom)) !important; } }
   .modal-overlay, .modal-backdrop { z-index: 1100 !important; }
   .modal { background: #111830; opacity: 1 !important; }
+  @media (min-width: 901px) {
+    .app-shell { display: flex !important; min-height: 100vh; }
+    .sidebar { position: sticky !important; top: 0; left: auto; height: 100vh; flex: 0 0 260px; width: 260px; transform: none !important; display: flex; flex-direction: column; overflow: hidden; }
+    .sidebar-nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    .sidebar-footer { flex: 0 0 auto; }
+    .main-content { margin-left: 0 !important; flex: 1 1 auto; min-width: 0; }
+    .content-area { max-width: 1240px; margin-left: auto; margin-right: auto; }
+  }
+  body, button, input, select, textarea, td, th { letter-spacing: normal; font-kerning: normal; }
   .avatar { overflow: hidden; flex-shrink: 0; }
   .avatar img { max-width: 100%; max-height: 100%; object-fit: cover; }
   `
