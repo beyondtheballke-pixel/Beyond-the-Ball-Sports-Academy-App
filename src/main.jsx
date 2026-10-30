@@ -81,7 +81,7 @@ const FORMAT_OF = Object.fromEntries(HOLIDAY_FORMATS.map(([a, f]) => ['U' + a.re
 // Age is counted as at 31 December of this year (year-of-birth rule). A manager can override the group.
 const autoAgeGroup = (dob) => {
   if (!dob) return ''
-  const a = parseInt(todayNairobi().slice(0, 4)) - parseInt(String(dob).slice(0, 4))
+  const a = exactAge(dob)
   return a <= 6 ? 'U7' : a <= 8 ? 'U9' : a <= 10 ? 'U11' : a <= 12 ? 'U13' : a <= 14 ? 'U15' : a <= 16 ? 'U17' : a <= 18 ? 'U19' : 'Open'
 }
 const ageGroupOf = (p) => p?.age_group_override || autoAgeGroup(p?.date_of_birth)
