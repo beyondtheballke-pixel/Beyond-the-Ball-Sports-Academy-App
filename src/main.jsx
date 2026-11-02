@@ -497,7 +497,7 @@ function SquadPage({ club, userRole }) {
           </div>
         )}
       {filtered.length > showCount && <div style={{ textAlign: 'center', margin: '12px 0' }}><button className="btn btn-ghost" onClick={() => setShowCount(c => c + 60)}>Show more ({filtered.length - showCount} left)</button></div>}
-      {showAdd && <PlayerRegistrationModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      {showAdd && <PlayerRegistrationModal club={club} onClose={() => setShowAdd(false)} onSaved={(created) => { setShowAdd(false); load(); if (isStaffF && created && created.length === 1) setSquadFx(created[0]) }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole={userRole} onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
     </div>
   )
@@ -837,7 +837,7 @@ function FixturesPage({ club, userRole, profile: profileF }) {
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false })
-    const { data: sq } = await supabase.from('match_squad').select('fixture_id,role,player:players(full_name)').eq('club_id', club.id)
+    const { data: sq } = await supabase.from('match_squad').select('fixture_id,role,guest_name,player:players(full_name)').eq('club_id', club.id)
     setSquads(sq || [])
     setFixtures(data || [])
     setLoading(false)
@@ -1076,9 +1076,9 @@ function AddFixtureModal({ club, onClose, onSaved }) {
     setSaving(true)
     const match_date = toNairobiISO(form.match_date, form.match_time)
     const groups = ages.includes('ALL') ? [null] : ages
-    const { error: err } = await supabase.from('fixtures').insert(groups.map(g => ({ club_id: club.id, opponent: form.opponent.trim(), competition: form.competition, match_date, venue: form.venue.trim() || null, is_home: form.is_home, status: 'upcoming', age_group: g })))
+    const { data: created, error: err } = await supabase.from('fixtures').insert(groups.map(g => ({ club_id: club.id, opponent: form.opponent.trim(), competition: form.competition, match_date, venue: form.venue.trim() || null, is_home: form.is_home, status: 'upcoming', age_group: g }))).select()
     if (err) { setError(friendly(err.message)); setSaving(false); return }
-    onSaved()
+    onSaved(created || [])
   }
 
   return (
@@ -1102,7 +1102,7 @@ function AddFixtureModal({ club, onClose, onSaved }) {
       </div>
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : ages.length > 1 ? `Create ${ages.length} matches` : 'Save fixture'}</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : ages.length > 1 ? `Create ${ages.length} matches` : 'Save & pick squad'}</button>
       </div>
     </Modal>
   )
@@ -1991,20 +1991,36 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [guests, setGuests] = useState([])   // names of players not registered in the app: {name, role}
+  const [names, setNames] = useState('')
+  const [newRole, setNewRole] = useState('starter')
 
   useEffect(() => {
     Promise.all([
       supabase.from('players').select('id,full_name,squad_number,date_of_birth,age_group_override,position,status').eq('club_id', club.id).eq('is_active', true).in('status', ['active', 'injured']).order('full_name'),
-      supabase.from('match_squad').select('player_id,role').eq('fixture_id', fixture.id),
+      supabase.from('match_squad').select('player_id,role,guest_name').eq('fixture_id', fixture.id),
       supabase.from('match_notes').select('notes').eq('fixture_id', fixture.id).maybeSingle(),
     ]).then(([{ data: pl }, { data: sq }, { data: nt }]) => {
-      const m = Object.fromEntries((sq || []).map(r => [r.player_id, r.role]))
+      const m = Object.fromEntries((sq || []).filter(r => r.player_id).map(r => [r.player_id, r.role]))
+      setGuests((sq || []).filter(r => !r.player_id).map(r => ({ name: r.guest_name, role: r.role })))
       setPlayers(pl || []); setRoles(m); setOrig(m); setNotes(nt?.notes || ''); setLoading(false)
     })
   }, [club.id, fixture.id])
 
   const setRole = (id, r) => setRoles(x => { const n = { ...x }; if (n[id] === r) delete n[id]; else n[id] = r; return n })
-  const count = (r) => Object.values(roles).filter(v => v === r).length
+  const count = (r) => Object.values(roles).filter(v => v === r).length + guests.filter(g => g.role === r).length
+  const addNames = () => {
+    const list = names.split(/[\n,;]+/).map(x => x.trim().replace(/\s+/g, ' ')).filter(x => x.length >= 2)
+    if (!list.length) return
+    const nr = { ...roles }; const ng = [...guests]; let linked = 0
+    for (const n of list) {
+      const hit = players.find(p => p.full_name.toLowerCase() === n.toLowerCase())
+      if (hit) { nr[hit.id] = newRole; linked++ }
+      else if (!ng.some(g => g.name.toLowerCase() === n.toLowerCase())) ng.push({ name: n.slice(0, 80), role: newRole })
+    }
+    setRoles(nr); setGuests(ng); setNames('')
+    if (linked) setError('')
+  }
   const ages = AGE_GROUPS.filter(g => players.some(p => ageGroupOf(p) === g))
   const shown = players.filter(p => (age === 'all' || ageGroupOf(p) === age) && (!search || p.full_name.toLowerCase().includes(search.toLowerCase())))
 
@@ -2015,6 +2031,8 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
     let err = null
     if (upserts.length) ({ error: err } = await supabase.from('match_squad').upsert(upserts, { onConflict: 'fixture_id,player_id' }))
     if (!err && removed.length) ({ error: err } = await supabase.from('match_squad').delete().eq('fixture_id', fixture.id).in('player_id', removed))
+    if (!err) ({ error: err } = await supabase.from('match_squad').delete().eq('fixture_id', fixture.id).is('player_id', null))
+    if (!err && guests.length) ({ error: err } = await supabase.from('match_squad').insert(guests.map(g => ({ club_id: club.id, fixture_id: fixture.id, guest_name: g.name, role: g.role }))))
     if (!err) ({ error: err } = await supabase.from('match_notes').upsert({ fixture_id: fixture.id, club_id: club.id, notes: notes.trim(), updated_by: profile.id, updated_at: new Date().toISOString() }, { onConflict: 'fixture_id' }))
     setSaving(false)
     if (err) setError(friendly(err.message)); else onSaved()
@@ -2022,7 +2040,7 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
 
   const nameOf = (id) => players.find(p => p.id === id)?.full_name
   const shareText = () => {
-    const list = (r) => Object.entries(roles).filter(([, v]) => v === r).map(([id]) => nameOf(id)).filter(Boolean).sort().join(', ')
+    const list = (r) => [...Object.entries(roles).filter(([, v]) => v === r).map(([id]) => nameOf(id)), ...guests.filter(g => g.role === r).map(g => g.name)].filter(Boolean).sort().join(', ')
     return `⚽ ${club.name} vs ${fixture.opponent}\n${fmtDate(fixture.match_date)} ${fmtTime(fixture.match_date)}${fixture.venue ? '\n📍 ' + fixture.venue : ''}\n\nStarting: ${list('starter') || 'to be confirmed'}\nBench: ${list('sub') || '-'}`
   }
 
@@ -2034,6 +2052,26 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <input placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ flex: 1, minWidth: 140 }} />
           <select value={age} onChange={e => setAge(e.target.value)} style={{ width: 120 }}><option value="all">All ages</option>{ages.map(g => <option key={g}>{g}</option>)}</select>
+        </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Add names (players not yet registered are fine)</div>
+          <textarea rows={3} value={names} onChange={e => setNames(e.target.value)} placeholder={'One name per line, or separated by commas\nKevin Otieno\nBrian Mwangi'} />
+          <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <select value={newRole} onChange={e => setNewRole(e.target.value)} style={{ width: 'auto' }}><option value="starter">Starting team</option><option value="sub">Bench</option><option value="unavailable">Out</option></select>
+            <button className="btn btn-primary btn-sm" onClick={addNames} disabled={!names.trim()}>Add to squad</button>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>A name that matches a registered player is linked to them.</span>
+          </div>
+          {guests.length > 0 && <div style={{ marginTop: 10 }}>
+            {guests.map((g, i) => (
+              <div key={g.name} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 130, fontSize: 13, fontWeight: 600 }}>{g.name} <span className="tag" style={{ color: 'var(--text-muted)', marginLeft: 4 }}>not registered</span></div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {SQUAD_ROLES.map(([k, l, col]) => <button key={k} onClick={() => setGuests(x => x.map((y, j) => j === i ? { ...y, role: k } : y))} className="btn btn-sm" style={{ background: g.role === k ? col : 'transparent', color: g.role === k ? '#000' : 'var(--text-muted)', border: `0.5px solid ${g.role === k ? col : 'var(--border)'}`, padding: '6px 10px', fontSize: 12 }}>{l}</button>)}
+                  <button className="btn btn-ghost btn-sm" onClick={() => setGuests(x => x.filter((_, j) => j !== i))}>✕</button>
+                </div>
+              </div>
+            ))}
+          </div>}
         </div>
         {loading ? <Spinner /> : (
           <div style={{ maxHeight: 340, overflowY: 'auto' }}>
@@ -2053,6 +2091,7 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
         </div>
       </div>
       <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={onClose}>Skip for now</button>
         <a className="btn btn-ghost" href={waShare(shareText())} target="_blank" rel="noreferrer">Share squad on WhatsApp</a>
         <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : 'Save squad'}</button>
       </div>
