@@ -1406,7 +1406,9 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
   const [view, setView] = useState('list')
   const [q, setQ] = useState('')
   const [ageF, setAgeF] = useState('all')
-  const [absFor, setAbsFor] = useState(null)   // player id whose absence reason is being entered
+  const [absFor, setAbsFor] = useState(null)
+  const [guests, setGuests] = useState([])   // people not registered in the app: {name, status}
+  const [names, setNames] = useState('')   // player id whose absence reason is being entered
   const day = nairobiDate(session.session_date)
 
   useEffect(() => {
@@ -1416,10 +1418,11 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
       if (session.training_center_id && !allCentres) pq = pq.or(`training_center_id.eq.${session.training_center_id},attends_both.eq.true`)
       const [{ data: pl }, { data: att }, { data: abs }] = await Promise.all([
         pq.order('full_name'),
-        supabase.from('training_attendance').select('player_id,status,notes').eq('session_id', session.id),
+        supabase.from('training_attendance').select('player_id,status,notes,guest_name').eq('session_id', session.id),
         supabase.from('absence_reports').select('player_id,reason_type,reason').eq('club_id', club.id).lte('date_from', day).gte('date_to', day),
       ])
-      const attMap = Object.fromEntries((att || []).map(a => [a.player_id, a]))
+      setGuests((att || []).filter(a => !a.player_id).map(a => ({ name: a.guest_name, status: a.status })))
+      const attMap = Object.fromEntries((att || []).filter(a => a.player_id).map(a => [a.player_id, a]))
       const absMap = Object.fromEntries((abs || []).map(a => [a.player_id, a]))
       setRows((pl || []).map(p => ({ ...p, status: attMap[p.id]?.status || (absMap[p.id] ? 'excused' : null), saved: !!attMap[p.id], reported: absMap[p.id] || null, coachReason: null })))
       setLoading(false)
@@ -1433,7 +1436,18 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
   const setAll = (status) => setRows(r => r.map(p => visible.some(v => v.id === p.id) ? { ...p, status } : p))
   const counts = Object.fromEntries(ATT_STATUS.map(([k]) => [k, rows.filter(p => p.status === k).length]))
   const unmarked = rows.filter(p => !p.status).length
-  const here = rows.filter(p => p.status === 'present' || p.status === 'late').length
+  const here = rows.filter(p => p.status === 'present' || p.status === 'late').length + guests.filter(g => g.status !== 'absent').length
+  const addNames = () => {
+    const list = names.split(/[\n,;]+/).map(x => x.trim().replace(/\s+/g, ' ')).filter(x => x.length >= 2)
+    if (!list.length) return
+    let nr = rows; const ng = [...guests]
+    for (const n of list) {
+      const hit = nr.find(p => p.full_name.toLowerCase() === n.toLowerCase())
+      if (hit) nr = nr.map(p => p.id === hit.id ? { ...p, status: 'present' } : p)
+      else if (!ng.some(g => g.name.toLowerCase() === n.toLowerCase())) ng.push({ name: n.slice(0, 80), status: 'present' })
+    }
+    setRows(nr); setGuests(ng); setNames('')
+  }
   const ages = [...new Set(rows.map(ageGroupOf))].filter(Boolean).sort((a, b) => AGE_GROUPS.indexOf(a) - AGE_GROUPS.indexOf(b))
   const visible = rows.filter(p => (ageF === 'all' || ageGroupOf(p) === ageF) && (!q.trim() || p.full_name.toLowerCase().includes(q.trim().toLowerCase())))
 
@@ -1441,16 +1455,22 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
     // In the tick-list, anyone left unticked is recorded as absent
     const final = rows.map(p => (view === 'list' && !p.status) ? { ...p, status: 'absent' } : p)
     const payload = final.filter(p => p.status).map(p => ({ session_id: session.id, player_id: p.id, club_id: club.id, status: p.status, marked_by: profile.id, updated_at: new Date().toISOString() }))
-    if (payload.length === 0) { setError('Mark at least one player'); return }
+    if (payload.length === 0 && guests.length === 0) { setError('Mark at least one player'); return }
     setSaving(true); setError('')
     const { error: err } = await supabase.from('training_attendance').upsert(payload, { onConflict: 'session_id,player_id' })
     if (err && isNetworkError(err.message)) {
       setSaving(false)
+      if (guests.length) { setError('No signal. Names added by hand cannot be saved offline. Try again when you are back online.'); return }
       try { const qd = JSON.parse(localStorage.getItem('sp-att-queue') || '[]'); qd.push(payload); localStorage.setItem('sp-att-queue', JSON.stringify(qd)) } catch {}
       onSaved('No signal. Attendance is saved on this phone and will send by itself when you are back online.')
       return
     }
     if (err) { setSaving(false); setError(friendly(err.message)); return }
+    // Names added by hand: replace this session's list
+    let gerr = null
+    ;({ error: gerr } = await supabase.from('training_attendance').delete().eq('session_id', session.id).is('player_id', null))
+    if (!gerr && guests.length) ({ error: gerr } = await supabase.from('training_attendance').insert(guests.map(g => ({ session_id: session.id, club_id: club.id, guest_name: g.name, status: g.status, marked_by: profile.id }))))
+    if (gerr) { setSaving(false); setError('Players saved, but the names added by hand could not be: ' + friendly(gerr.message)); return }
     // Absences with a reason entered by the coach are also logged in Absences
     const reasons = final.filter(p => p.coachReason && p.status === 'absent').map(p => ({ club_id: club.id, player_id: p.id, reported_by: profile.id, date_from: day, date_to: day, reason_type: p.coachReason.type, reason: p.coachReason.note.trim() || null }))
     let warn = null
@@ -1480,6 +1500,26 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
         </div>
         <div style={{ fontSize: 13, marginBottom: 12, fontWeight: 600 }}>
           <span style={{ color: '#22c55e' }}>{here} present</span> · <span style={{ color: '#ef4444' }}>{absentWillBe} absent</span>{counts.excused ? ` · ${counts.excused} excused` : ''}{view === 'detail' && unmarked ? ` · ${unmarked} not marked` : ''}
+        </div>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Add someone by name (trialist, walk-in, not registered yet)</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <textarea rows={2} value={names} onChange={e => setNames(e.target.value)} placeholder="One name per line, or separated by commas" style={{ flex: '1 1 240px' }} />
+            <button className="btn btn-primary btn-sm" onClick={addNames} disabled={!names.trim()} style={{ alignSelf: 'flex-start' }}>Add as present</button>
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>A name that matches a registered player just ticks that player.</div>
+          {guests.length > 0 && <div className="att-grid" style={{ marginTop: 10 }}>
+            {guests.map((g, i) => {
+              const on = g.status !== 'absent'
+              return (
+                <div key={g.name} className={`att-row ${on ? 'on' : 'off'}`} onClick={() => setGuests(x => x.map((y, j) => j === i ? { ...y, status: on ? 'absent' : 'present' } : y))}>
+                  <span className="att-box">{on ? '✓' : ''}</span>
+                  <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600 }}>{g.name} <span className="tag" style={{ color: 'var(--text-muted)', marginLeft: 4 }}>not registered</span></div>
+                  <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setGuests(x => x.filter((_, j) => j !== i)) }}>✕</button>
+                </div>
+              )
+            })}
+          </div>}
         </div>
         {loading ? <Spinner /> : rows.length === 0 ? <div className="empty"><div className="empty-sub">No active players at this centre yet</div></div> : visible.length === 0 ? <div className="empty"><div className="empty-sub">No players match</div></div> : view === 'list' ? (
           <div className="att-grid">
