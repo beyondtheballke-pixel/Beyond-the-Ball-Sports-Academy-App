@@ -434,7 +434,7 @@ function SquadPage({ club, userRole }) {
     const { data: cs } = await supabase.from('training_centers').select('id,name').eq('club_id', club.id)
     setCenters(cs || [])
     setLoading(false)
-  }, [club.id, isStaffF])
+  }, [club.id])
 
   useEffect(() => { load() }, [load])
 
@@ -498,7 +498,7 @@ function SquadPage({ club, userRole }) {
           </div>
         )}
       {filtered.length > showCount && <div style={{ textAlign: 'center', margin: '12px 0' }}><button className="btn btn-ghost" onClick={() => setShowCount(c => c + 60)}>Show more ({filtered.length - showCount} left)</button></div>}
-      {showAdd && <PlayerRegistrationModal club={club} onClose={() => setShowAdd(false)} onSaved={(created) => { setShowAdd(false); load(); if (isStaffF && created && created.length === 1) setSquadFx(created[0]) }} />}
+      {showAdd && <PlayerRegistrationModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
       {selected && <PlayerDetailModal player={selected} club={club} userRole={userRole} onClose={() => setSelected(null)} onUpdated={() => { setSelected(null); load() }} />}
     </div>
   )
@@ -650,10 +650,6 @@ function PlayerRegistrationModal({ club, onClose, onSaved }) {
             <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Home address</label><textarea value={form.home_address} onChange={e => set('home_address', e.target.value)} placeholder="Estate / village, town" /></div>
           </div>
         )}
-        {editing && <EditChildModal player={player} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onUpdated && onUpdated() }} />}
-        {tab === 'pricing' && <PlayerPricing player={player} club={club} onSaved={() => onUpdated && onUpdated()} />}
-        {tab === 'attendance' && <PlayerAttendance player={player} />}
-        {tab === 'media' && <PlayerMedia player={player} club={club} canEdit={isStaff} />}
         {tab === 'documents' && (
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 16 }}>PDF, JPG or PNG, up to 5 MB each. Documents are stored privately and only the academy and you can open them.</div>
@@ -771,7 +767,7 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
           </div>
         )}
         <div className="tabs no-scroll">
-          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : []), ...((isStaff || isParent) && player.status === 'active' ? [{ k: 'attendance', l: 'Attendance' }, { k: 'media', l: 'Media' }] : []), ...(userRole === 'manager' && player.status !== 'pending' ? [{ k: 'pricing', l: 'Fees' }] : [])].map(t => (
+          {[{ k: 'profile', l: 'Profile' }, { k: 'academy', l: 'School' }, { k: 'documents', l: `Documents (${docs.length})` }, ...(player.links?.[0]?.parent ? [{ k: 'family', l: 'Family' }] : []), ...((isStaff || isParent) && player.status === 'active' ? [{ k: 'attendance', l: 'Attendance' }, { k: 'media', l: 'Media' }, { k: 'transport', l: 'Transport' }] : []), ...(userRole === 'manager' && player.status !== 'pending' ? [{ k: 'pricing', l: 'Fees' }] : [])].map(t => (
             <button key={t.k} className={`tab ${tab === t.k ? 'active' : ''}`} onClick={() => setTab(t.k)}>{t.l}</button>
           ))}
         </div>
@@ -796,6 +792,11 @@ function PlayerDetailModal({ player, club, userRole, onClose, onUpdated }) {
               <div key={l} style={{ gridColumn: full ? '1 / -1' : 'auto' }}><div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: 3 }}>{l}</div><div style={{ fontSize: 13, color: v ? 'var(--text)' : 'var(--text-dim)' }}>{v || '—'}</div></div>
             ))}
           </div>) })()}
+        {editing && <EditChildModal player={player} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); onUpdated && onUpdated() }} />}
+        {tab === 'pricing' && <PlayerPricing player={player} club={club} onSaved={() => onUpdated && onUpdated()} />}
+        {tab === 'attendance' && <PlayerAttendance player={player} />}
+        {tab === 'media' && <PlayerMedia player={player} club={club} canEdit={isStaff} />}
+        {tab === 'transport' && <PlayerTransport player={player} />}
         {tab === 'documents' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {msg && <Note kind={msg.kind}>{msg.text}</Note>}
@@ -835,6 +836,8 @@ function FixturesPage({ club, userRole, profile: profileF }) {
   const [editFx, setEditFx] = useState(null)
   const [resultFx, setResultFx] = useState(null)
   const [reportFx, setReportFx] = useState(null)
+  const [mediaFx, setMediaFx] = useState(null)
+  const [mediaCounts, setMediaCounts] = useState({})
   const [awards, setAwards] = useState([])
   const [reports, setReports] = useState({})
   const isStaffF = userRole === 'manager' || userRole === 'coach'
@@ -845,6 +848,8 @@ function FixturesPage({ club, userRole, profile: profileF }) {
     setSquads(sq || [])
     const { data: aw } = await supabase.from('match_awards').select('fixture_id,award,guest_name,reason,player:players(full_name)').eq('club_id', club.id)
     setAwards(aw || [])
+    const { data: mc } = await supabase.from('media_items').select('fixture_id').eq('club_id', club.id).not('fixture_id', 'is', null).limit(2000)
+    const cnt = {}; (mc || []).forEach(r => { cnt[r.fixture_id] = (cnt[r.fixture_id] || 0) + 1 }); setMediaCounts(cnt)
     if (isStaffF) { const { data: rp } = await supabase.from('match_reports').select('fixture_id,pre_at,post_at').eq('club_id', club.id); setReports(Object.fromEntries((rp || []).map(r => [r.fixture_id, r]))) }
     setFixtures(data || [])
     setLoading(false)
@@ -903,6 +908,7 @@ function FixturesPage({ club, userRole, profile: profileF }) {
                   </div>
                   {f.venue && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>📍 {f.venue}</div>}
                   {!isStaffF && squads.filter(x => x.fixture_id === f.id).map((x, i) => <div key={i} style={{ fontSize: 12, marginTop: 6, color: x.role === 'unavailable' ? 'var(--red)' : 'var(--green)' }}>⚽ {x.player?.full_name?.split(' ')[0]}: {x.role === 'starter' ? 'in the starting team' : x.role === 'sub' ? 'on the bench' : 'not available'}</div>)}
+                  {!isStaffF && mediaCounts[f.id] > 0 && <div style={{ marginTop: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setMediaFx(f)}>Photos & videos ({mediaCounts[f.id]})</button></div>}
                   {awards.filter(a => a.fixture_id === f.id).length > 0 && <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>{AWARDS.map(([k, l, ico]) => { const a = awards.find(x => x.fixture_id === f.id && x.award === k); return a ? <span key={k} className="tag" style={{ color: 'var(--btb-gold, #e0b43c)' }} title={a.reason || ''}>{ico} {l}: {a.player?.full_name || a.guest_name}</span> : null })}</div>}
                   {f.status === 'completed' && f.match_report && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, whiteSpace: 'pre-wrap' }}>{f.match_report}</div>}
                   {isStaffF && <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -910,6 +916,7 @@ function FixturesPage({ club, userRole, profile: profileF }) {
                     {f.status !== 'live' && <button className="btn btn-primary btn-sm" onClick={() => setResultFx(f)}>{f.status === 'completed' ? 'Edit result' : 'Enter result'}</button>}
                     <button className="btn btn-ghost btn-sm" onClick={() => setReportFx({ f, tab: 'pre' })}>Pre-match{reports[f.id]?.pre_at ? ' ✓' : ''}</button>
                     {(f.status === 'completed' || f.status === 'live') && <button className="btn btn-ghost btn-sm" onClick={() => setReportFx({ f, tab: 'post' })}>Post-match{reports[f.id]?.post_at ? ' ✓' : ''}</button>}
+                    <button className="btn btn-ghost btn-sm" onClick={() => setMediaFx(f)}>Media{mediaCounts[f.id] ? ` (${mediaCounts[f.id]})` : ''}</button>
                     <button className="btn btn-ghost btn-sm" onClick={() => setEditFx(f)}>Edit match</button>
                   </div>}
                 </div>
@@ -918,11 +925,398 @@ function FixturesPage({ club, userRole, profile: profileF }) {
           </div>
         )}
       {editFx && <EditFixtureModal fixture={editFx} onClose={() => setEditFx(null)} onSaved={() => { setEditFx(null); load() }} />}
+      {mediaFx && <MatchMediaModal club={club} profile={profileF} fixture={mediaFx} onClose={() => setMediaFx(null)} onChanged={load} />}
       {reportFx && <MatchReportsModal club={club} fixture={reportFx.f} profile={profileF} initialTab={reportFx.tab} onClose={() => setReportFx(null)} onSaved={load} />}
       {resultFx && <MatchResultModal club={club} profile={profileF} fixture={resultFx} onClose={() => setResultFx(null)} onSaved={() => { setResultFx(null); load() }} />}
       {squadFx && <MatchSquadModal club={club} fixture={squadFx} profile={profileF} onClose={() => setSquadFx(null)} onSaved={() => { setSquadFx(null); load() }} />}
-      {showAdd && <AddFixtureModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+      {showAdd && <AddFixtureModal club={club} onClose={() => setShowAdd(false)} onSaved={(created) => { setShowAdd(false); load(); if (isStaffF && created && created.length === 1) setSquadFx(created[0]) }} />}
     </div>
+  )
+}
+
+// ---------- Media centre (photos, videos and links tagged with the players in them)
+const GALLERY = 'sportspulse-gallery'
+const MEDIA_SELECT = '*, fixture:fixtures(opponent,age_group,match_date), tags:media_tags(player_id, player:players(full_name))'
+
+function TagPicker({ players, value, onChange, quick = [] }) {
+  const [q, setQ] = useState('')
+  const sel = new Set(value)
+  const hits = q.trim() ? players.filter(p => !sel.has(p.id) && p.full_name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 6) : []
+  const nameOf = (id) => players.find(p => p.id === id)?.full_name || 'Player'
+  return (
+    <div>
+      {value.length > 0 && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+        {value.map(id => <span key={id} className="tag" style={{ color: 'var(--btb-gold, #e0b43c)', cursor: 'pointer' }} onClick={() => onChange(value.filter(x => x !== id))}>{nameOf(id)} ✕</span>)}
+      </div>}
+      <input placeholder="Type a name to tag a player" value={q} onChange={e => setQ(e.target.value)} />
+      {hits.length > 0 && <div style={{ border: '1px solid var(--border)', borderRadius: 10, marginTop: 4, overflow: 'hidden' }}>
+        {hits.map(p => <div key={p.id} style={{ padding: '9px 12px', cursor: 'pointer', borderBottom: '0.5px solid var(--border)', fontSize: 14 }} onClick={() => { onChange([...value, p.id]); setQ('') }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>)}
+      </div>}
+      {quick.length > 0 && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+        {quick.map(x => <button key={x.label} type="button" className="btn btn-ghost btn-sm" onClick={() => onChange([...new Set([...value, ...x.ids])])}>{x.label}</button>)}
+        {value.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onChange([])}>Clear tags</button>}
+      </div>}
+    </div>
+  )
+}
+
+function useActivePlayers(club) {
+  const [players, setPlayers] = useState([])
+  useEffect(() => { supabase.from('players').select('id,full_name,date_of_birth,age_group_override').eq('club_id', club.id).eq('is_active', true).order('full_name').then(({ data }) => setPlayers(data || [])) }, [club.id])
+  return players
+}
+
+function AddMediaModal({ club, profile, fixture, onClose, onSaved }) {
+  const players = useActivePlayers(club)
+  const [fixtures, setFixtures] = useState([])
+  const [fixtureId, setFixtureId] = useState(fixture?.id || '')
+  const [squadIds, setSquadIds] = useState([])
+  const [mode, setMode] = useState('files')
+  const [title, setTitle] = useState(''); const [caption, setCaption] = useState('')
+  const [link, setLink] = useState('')
+  const [team, setTeam] = useState(false)
+  const [tags, setTags] = useState([])
+  const [files, setFiles] = useState([])
+  const [busy, setBusy] = useState(''); const [error, setError] = useState('')
+
+  useEffect(() => { supabase.from('fixtures').select('id,opponent,match_date,age_group').eq('club_id', club.id).order('match_date', { ascending: false }).limit(60).then(({ data }) => setFixtures(data || [])) }, [club.id])
+  useEffect(() => {
+    if (!fixtureId) { setSquadIds([]); return }
+    supabase.from('match_squad').select('player_id,role').eq('fixture_id', fixtureId).then(({ data }) => setSquadIds((data || []).filter(r => r.player_id && r.role !== 'unavailable').map(r => r.player_id)))
+  }, [fixtureId])
+  const fx = fixtures.find(f => f.id === fixtureId)
+  const ageIds = fx?.age_group ? players.filter(p => ageGroupOf(p) === fx.age_group).map(p => p.id) : []
+  const quick = [...(squadIds.length ? [{ label: `Whole match squad (${squadIds.length})`, ids: squadIds }] : []), ...(ageIds.length ? [{ label: `All ${fx.age_group} players`, ids: ageIds }] : [])]
+
+  const pick = (e) => {
+    const picked = Array.from(e.target.files || []); e.target.value = ''
+    const ok = [], bad = []
+    picked.forEach(f => {
+      const v = f.type.startsWith('video/'), i = f.type.startsWith('image/')
+      if (!v && !i) bad.push(`${f.name}: not a photo or video`)
+      else if (v && f.size > 50 * 1024 * 1024) bad.push(`${f.name}: video is over 50 MB. Upload it to YouTube or Drive and add a link instead`)
+      else if (i && f.size > 15 * 1024 * 1024) bad.push(`${f.name}: photo is too large`)
+      else ok.push(f)
+    })
+    setFiles(x => [...x, ...ok].slice(0, 20)); setError(bad.join('. '))
+  }
+
+  const save = async () => {
+    setError('')
+    if (mode === 'files' && !files.length) { setError('Choose at least one photo or video'); return }
+    if (mode === 'link' && !/^https:\/\/\S+$/i.test(link.trim())) { setError('Paste a full link starting with https://'); return }
+    const created = []; const bad = []
+    const base = { club_id: club.id, fixture_id: fixtureId || null, caption: caption.trim() || null, visibility: team ? 'team' : 'tagged', uploaded_by: profile.id }
+    const addTags = async (id) => { if (tags.length) await supabase.from('media_tags').insert(tags.map(pid => ({ media_id: id, player_id: pid, club_id: club.id }))) }
+    if (mode === 'link') {
+      setBusy('Saving...')
+      const { data, error: err } = await supabase.from('media_items').insert({ ...base, kind: 'link', title: title.trim() || 'Highlights', external_url: link.trim() }).select('id').single()
+      if (err) { setBusy(''); setError(friendly(err.message)); return }
+      await addTags(data.id); created.push(data.id)
+    } else {
+      for (let i = 0; i < files.length; i++) {
+        setBusy(`Uploading ${i + 1} of ${files.length}...`)
+        let f = files[i]; const isVideo = f.type.startsWith('video/')
+        if (!isVideo) f = await shrinkImage(f)
+        const ext = (f.name.split('.').pop() || 'bin').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 5)
+        const path = `${club.id}/${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}.${ext}`
+        const { error: upErr } = await supabase.storage.from(GALLERY).upload(path, f, { contentType: f.type })
+        if (upErr) { bad.push(`${files[i].name}: ${upErr.message}`); continue }
+        const { data, error: dbErr } = await supabase.from('media_items').insert({ ...base, kind: isVideo ? 'video' : 'photo', title: title.trim() || null, file_path: path }).select('id').single()
+        if (dbErr) { bad.push(`${files[i].name}: ${dbErr.message}`); await supabase.storage.from(GALLERY).remove([path]); continue }
+        await addTags(data.id); created.push(data.id)
+      }
+    }
+    setBusy('')
+    if (bad.length && !created.length) { setError(bad.join('. ')); return }
+    onSaved(bad.length ? `${created.length} added. Problems: ${bad.join('; ')}` : `${created.length} item${created.length === 1 ? '' : 's'} added${tags.length ? ` and tagged with ${tags.length} player${tags.length === 1 ? '' : 's'}` : ''}`)
+  }
+
+  return (
+    <Modal title="Add media" onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="filter-pills" style={{ marginBottom: 12 }}>
+          <button className={`pill ${mode === 'files' ? 'active' : ''}`} onClick={() => setMode('files')}>Photos / videos</button>
+          <button className={`pill ${mode === 'link' ? 'active' : ''}`} onClick={() => setMode('link')}>Link (YouTube, Drive)</button>
+        </div>
+        {mode === 'files' ? (
+          <div style={{ marginBottom: 12 }}>
+            <label className="btn btn-primary" style={{ cursor: 'pointer' }}>+ Choose photos or videos<input type="file" multiple accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm" style={{ display: 'none' }} onChange={pick} /></label>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 10 }}>Up to 20 at a time. Photos are resized. Videos up to 50 MB.</span>
+            {files.length > 0 && <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>{files.map((f, i) => <span key={i} className="tag" style={{ color: 'var(--text-muted)', cursor: 'pointer' }} onClick={() => setFiles(x => x.filter((_, j) => j !== i))}>{f.name.slice(0, 24)} ✕</span>)}</div>}
+          </div>
+        ) : <FormField label="Link *"><input placeholder="https://youtu.be/..." value={link} onChange={e => setLink(e.target.value)} /></FormField>}
+        <div className="form-grid">
+          <FormField label="Match (optional)"><select value={fixtureId} onChange={e => setFixtureId(e.target.value)}><option value="">Not from a match</option>{fixtures.map(f => <option key={f.id} value={f.id}>{f.opponent}{f.age_group ? ' ' + f.age_group : ''} · {fmtDate(f.match_date)}</option>)}</select></FormField>
+          <FormField label="Title (optional)"><input maxLength={120} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. First half action" /></FormField>
+          <FormField label="Caption (optional)" full><input maxLength={500} value={caption} onChange={e => setCaption(e.target.value)} /></FormField>
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 14, margin: '14px 0 6px' }}>Who is in this?</div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>Tagged players see it on their profile, and their parents can see it. For several photos with different players, add them in separate batches.</div>
+        <TagPicker players={players} value={tags} onChange={setTags} quick={quick} />
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginTop: 14 }}><input type="checkbox" style={{ width: 'auto' }} checked={team} onChange={e => setTeam(e.target.checked)} /> Show to every parent (team photo or match highlight)</label>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose} disabled={!!busy}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={!!busy}>{busy || 'Add media'}</button></div>
+    </Modal>
+  )
+}
+
+function EditTagsModal({ club, item, onClose, onSaved }) {
+  const players = useActivePlayers(club)
+  const [tags, setTags] = useState((item.tags || []).map(t => t.player_id))
+  const [team, setTeam] = useState(item.visibility === 'team')
+  const [title, setTitle] = useState(item.title || ''); const [caption, setCaption] = useState(item.caption || '')
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const save = async () => {
+    setSaving(true); setError('')
+    const old = (item.tags || []).map(t => t.player_id)
+    const rem = old.filter(x => !tags.includes(x)); const add = tags.filter(x => !old.includes(x))
+    let { error: err } = await supabase.from('media_items').update({ title: title.trim() || null, caption: caption.trim() || null, visibility: team ? 'team' : 'tagged' }).eq('id', item.id)
+    if (!err && rem.length) ({ error: err } = await supabase.from('media_tags').delete().eq('media_id', item.id).in('player_id', rem))
+    if (!err && add.length) ({ error: err } = await supabase.from('media_tags').insert(add.map(pid => ({ media_id: item.id, player_id: pid, club_id: club.id }))))
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title="Tags and details" onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <FormField label="Title"><input maxLength={120} value={title} onChange={e => setTitle(e.target.value)} /></FormField>
+        <FormField label="Caption"><input maxLength={500} value={caption} onChange={e => setCaption(e.target.value)} /></FormField>
+        <div style={{ fontWeight: 700, fontSize: 14, margin: '10px 0 6px' }}>Who is in this?</div>
+        <TagPicker players={players} value={tags} onChange={setTags} />
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, marginTop: 14 }}><input type="checkbox" style={{ width: 'auto' }} checked={team} onChange={e => setTeam(e.target.checked)} /> Show to every parent</label>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+    </Modal>
+  )
+}
+
+function MediaGrid({ club, items, canEdit, onChanged }) {
+  const [urls, setUrls] = useState({})
+  const [open, setOpen] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [msg, setMsg] = useState(null)
+  const key = items.map(i => i.id).join(',')
+  useEffect(() => {
+    const paths = items.filter(m => m.file_path).map(m => m.file_path)
+    if (!paths.length) { setUrls({}); return }
+    supabase.storage.from(GALLERY).createSignedUrls(paths, 3600).then(({ data }) => setUrls(Object.fromEntries((data || []).filter(s => s.signedUrl).map(s => [s.path, s.signedUrl]))))
+  }, [key])
+  const remove = async (m) => {
+    if (!confirm('Delete this item for everyone? This cannot be undone.')) return
+    if (m.file_path) await supabase.storage.from(GALLERY).remove([m.file_path])
+    const { error } = await supabase.from('media_items').delete().eq('id', m.id)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setOpen(null); onChanged() }
+  }
+  if (items.length === 0) return <EmptyState icon="image" title="No media yet" sub="Photos, videos and highlight links appear here." />
+  return (
+    <div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 10 }}>{msg.text}</Note>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10 }}>
+        {items.map(m => (
+          <div key={m.id} onClick={() => setOpen(m)} style={{ position: 'relative', aspectRatio: '1', background: 'var(--bg-card2)', border: '0.5px solid var(--border)', borderRadius: 12, overflow: 'hidden', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {m.kind === 'photo' && urls[m.file_path] && <img src={urls[m.file_path]} alt={m.title || ''} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+            {m.kind === 'video' && <><video src={urls[m.file_path] ? urls[m.file_path] + '#t=0.5' : undefined} preload="metadata" muted playsInline style={{ width: '100%', height: '100%', objectFit: 'cover' }} /><span style={{ position: 'absolute', fontSize: 30 }}>▶</span></>}
+            {m.kind === 'link' && <div style={{ textAlign: 'center', padding: 8 }}><div style={{ fontSize: 28 }}>🔗</div><div style={{ fontSize: 12, marginTop: 4 }}>{m.title}</div></div>}
+            {(m.tags || []).length > 0 && <span className="tag" style={{ position: 'absolute', left: 6, bottom: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', border: 'none' }}>{(m.tags || []).length} tagged</span>}
+          </div>
+        ))}
+      </div>
+      {open && (
+        <Modal title={open.title || (open.kind === 'link' ? 'Highlights' : open.kind === 'video' ? 'Video' : 'Photo')} onClose={() => setOpen(null)} size="modal-lg">
+          <div className="modal-body">
+            {open.kind === 'photo' && urls[open.file_path] && <img src={urls[open.file_path]} alt="" style={{ maxWidth: '100%', maxHeight: '60vh', display: 'block', margin: '0 auto', borderRadius: 8 }} />}
+            {open.kind === 'video' && urls[open.file_path] && <video src={urls[open.file_path]} controls playsInline style={{ maxWidth: '100%', maxHeight: '60vh', display: 'block', margin: '0 auto' }} />}
+            {open.kind === 'link' && <a className="btn btn-primary" href={open.external_url} target="_blank" rel="noreferrer">Open link</a>}
+            {open.caption && <div style={{ marginTop: 10, fontSize: 14 }}>{open.caption}</div>}
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+              {open.fixture ? `vs ${open.fixture.opponent}${open.fixture.age_group ? ' ' + open.fixture.age_group : ''} · ${fmtDate(open.fixture.match_date)}` : fmtDate(open.created_at)}
+              {open.visibility === 'team' ? ' · shown to every parent' : ''}
+            </div>
+            {(open.tags || []).length > 0 && <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>{open.tags.map(t => <span key={t.player_id} className="tag" style={{ color: 'var(--btb-gold, #e0b43c)' }}>{t.player?.full_name || 'Player'}</span>)}</div>}
+          </div>
+          <div className="modal-footer">
+            {urls[open.file_path] && <a className="btn btn-ghost" href={urls[open.file_path]} target="_blank" rel="noreferrer" download>Download</a>}
+            {canEdit && <button className="btn btn-ghost" onClick={() => { setEditing(open); setOpen(null) }}>Tags & details</button>}
+            {canEdit && <button className="btn btn-danger" onClick={() => remove(open)}>Delete</button>}
+          </div>
+        </Modal>
+      )}
+      {editing && <EditTagsModal club={club} item={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); onChanged() }} />}
+    </div>
+  )
+}
+
+function MediaCenterPage({ club, profile }) {
+  const canEdit = profile.role === 'manager' || profile.role === 'coach'
+  const [items, setItems] = useState([])
+  const [fixtures, setFixtures] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [adding, setAdding] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const [fx, setFx] = useState('all'); const [kind, setKind] = useState('all'); const [pl, setPl] = useState('all'); const [limit, setLimit] = useState(60)
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('media_items').select(MEDIA_SELECT).eq('club_id', club.id).order('created_at', { ascending: false }).limit(500)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) })
+    setItems(data || []); setLoading(false)
+  }, [club.id])
+  useEffect(() => { load() }, [load])
+  useEffect(() => { supabase.from('fixtures').select('id,opponent,match_date,age_group').eq('club_id', club.id).order('match_date', { ascending: false }).limit(80).then(({ data }) => setFixtures(data || [])) }, [club.id])
+  const tagged = {}; items.forEach(m => (m.tags || []).forEach(t => { tagged[t.player_id] = t.player?.full_name }))
+  const shown = items.filter(m => (fx === 'all' || m.fixture_id === fx) && (kind === 'all' || m.kind === kind) && (pl === 'all' || (m.tags || []).some(t => t.player_id === pl)))
+  if (loading) return <PageSkeleton />
+  return (
+    <div className="page">
+      <div className="page-hdr">
+        <div><div className="page-title">Media</div><div className="page-sub">{canEdit ? 'Photos, videos and highlights. Tag the players in them and it shows on their profile.' : 'Photos and highlights of your child and the team'}</div></div>
+        {canEdit && <div className="page-actions"><button className="btn btn-primary" onClick={() => setAdding(true)}>+ Add media</button></div>}
+      </div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14, alignItems: 'center' }}>
+        <div className="filter-pills" style={{ margin: 0 }}>{[['all', 'All'], ['photo', 'Photos'], ['video', 'Videos'], ['link', 'Links']].map(([k, l]) => <button key={k} className={`pill ${kind === k ? 'active' : ''}`} onClick={() => setKind(k)}>{l}</button>)}</div>
+        <select value={fx} onChange={e => setFx(e.target.value)} style={{ width: 'auto', maxWidth: 240 }}><option value="all">All matches</option>{fixtures.map(f => <option key={f.id} value={f.id}>{f.opponent}{f.age_group ? ' ' + f.age_group : ''} · {fmtDate(f.match_date)}</option>)}</select>
+        {Object.keys(tagged).length > 0 && <select value={pl} onChange={e => setPl(e.target.value)} style={{ width: 'auto', maxWidth: 220 }}><option value="all">Everyone</option>{Object.entries(tagged).sort((a, b) => (a[1] || '').localeCompare(b[1] || '')).map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select>}
+      </div>
+      <MediaGrid club={club} items={shown.slice(0, limit)} canEdit={canEdit} onChanged={load} />
+      {shown.length > limit && <div style={{ textAlign: 'center', margin: '14px 0' }}><button className="btn btn-ghost" onClick={() => setLimit(l => l + 60)}>Show more ({shown.length - limit} left)</button></div>}
+      {adding && <AddMediaModal club={club} profile={profile} onClose={() => setAdding(false)} onSaved={(t) => { setAdding(false); setMsg({ kind: 'ok', text: t }); load() }} />}
+    </div>
+  )
+}
+
+function MatchMediaModal({ club, profile, fixture, onClose, onChanged }) {
+  const canEdit = profile.role === 'manager' || profile.role === 'coach'
+  const [items, setItems] = useState(null)
+  const [adding, setAdding] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const load = useCallback(async () => {
+    const { data } = await supabase.from('media_items').select(MEDIA_SELECT).eq('fixture_id', fixture.id).order('created_at', { ascending: false })
+    setItems(data || []); onChanged && onChanged()
+  }, [fixture.id])
+  useEffect(() => { load() }, [load])
+  return (
+    <Modal title={`Media · vs ${fixture.opponent}${fixture.age_group ? ' · ' + fixture.age_group : ''}`} onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        {msg && <Note kind="ok" style={{ marginBottom: 10 }}>{msg}</Note>}
+        {canEdit && <div style={{ marginBottom: 12 }}><button className="btn btn-primary" onClick={() => setAdding(true)}>+ Add media to this match</button></div>}
+        {!items ? <Spinner /> : <MediaGrid club={club} items={items} canEdit={canEdit} onChanged={load} />}
+      </div>
+      {adding && <AddMediaModal club={club} profile={profile} fixture={fixture} onClose={() => setAdding(false)} onSaved={(t) => { setAdding(false); setMsg(t); load() }} />}
+    </Modal>
+  )
+}
+
+function PlayerTransport({ player }) {
+  const [rows, setRows] = useState(null)
+  useEffect(() => {
+    supabase.from('ledger_entries').select('id,entry_date,amount,method,notes,fixture:fixtures(opponent,age_group)').eq('player_id', player.id).eq('direction', 'in').eq('category', 'transport').eq('voided', false).order('entry_date', { ascending: false }).limit(100).then(({ data }) => setRows(data || []))
+  }, [player.id])
+  if (!rows) return <Spinner />
+  const month = todayNairobi().slice(0, 7)
+  const total = rows.reduce((a, r) => a + r.amount, 0)
+  const thisMonth = rows.filter(r => r.entry_date.startsWith(month))
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
+        {[{ l: 'Trips paid', v: rows.length }, { l: 'This month', v: fmtKES(thisMonth.reduce((a, r) => a + r.amount, 0)) }, { l: 'Total paid', v: fmtKES(total) }].map(s => (
+          <div key={s.l} style={{ background: 'var(--bg-card2)', borderRadius: 8, padding: 10, textAlign: 'center', border: '0.5px solid var(--border)' }}><div style={{ fontSize: 16, fontWeight: 700, color: 'var(--btb-gold)' }}>{s.v}</div><div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{s.l}</div></div>
+        ))}
+      </div>
+      {rows.length === 0 ? <div className="empty-sub">No transport payments recorded yet</div> : rows.map(r => (
+        <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '8px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13 }}>
+          <span>{fmtDate(r.entry_date + 'T12:00:00+03:00')} · {r.fixture ? `vs ${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}` : (r.notes || 'Transport')} <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{METHOD_LABEL[r.method] || ''}</span></span>
+          <b>{fmtKES(r.amount)}</b>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function TransportRunModal({ club, profile, fixtureId, onClose, onSaved }) {
+  const players = useActivePlayers(club)
+  const [fixtures, setFixtures] = useState([])
+  const [trip, setTrip] = useState(fixtureId || 'training')        // fixture id | 'training' | 'other'
+  const [label, setLabel] = useState('')
+  const [date, setDate] = useState(todayNairobi())
+  const [amount, setAmount] = useState(() => { try { return localStorage.getItem('sp-transport-amt') || '' } catch { return '' } })
+  const [method, setMethod] = useState('cash')
+  const [squadIds, setSquadIds] = useState(null)
+  const [paid, setPaid] = useState(new Set())
+  const [ticked, setTicked] = useState(new Set())
+  const [q, setQ] = useState(''); const [everyone, setEveryone] = useState(false)
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+
+  useEffect(() => { supabase.from('fixtures').select('id,opponent,match_date,age_group').eq('club_id', club.id).order('match_date', { ascending: false }).limit(40).then(({ data }) => setFixtures(data || [])) }, [club.id])
+  const fx = fixtures.find(f => f.id === trip)
+  useEffect(() => { if (fx) { const d = nairobiDate(fx.match_date); setDate(d > todayNairobi() ? todayNairobi() : d) } }, [fx?.id])
+  const tripKey = fx ? 'fx:' + fx.id : trip === 'training' ? 'training:' + date : 'other:' + date + ':' + label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)
+  useEffect(() => {
+    setSquadIds(null)
+    if (!fx) { setSquadIds([]); return }
+    supabase.from('match_squad').select('player_id,role').eq('fixture_id', fx.id).then(({ data }) => setSquadIds((data || []).filter(r => r.player_id && r.role !== 'unavailable').map(r => r.player_id)))
+  }, [fx?.id])
+  const reloadPaid = useCallback(async () => { if (tripKey.length < 3) return; const { data } = await supabase.rpc('transport_paid', { p_trip_key: tripKey }); setPaid(new Set(data || [])) }, [tripKey])
+  useEffect(() => { reloadPaid(); setTicked(new Set()) }, [reloadPaid])
+
+  const inScope = (p) => everyone || (squadIds && squadIds.length ? squadIds.includes(p.id) : fx?.age_group ? ageGroupOf(p) === fx.age_group : true)
+  const list = players.filter(p => inScope(p) && (!q.trim() || p.full_name.toLowerCase().includes(q.trim().toLowerCase())))
+  const toggle = (id) => setTicked(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const amt = parseInt(amount) || 0
+  const total = ticked.size * amt
+
+  const save = async () => {
+    if (!amt || amt < 1) { setError('Enter the transport amount per child'); return }
+    if (!ticked.size) { setError('Tick the children who paid'); return }
+    if (trip === 'other' && label.trim().length < 3) { setError('Give this trip a short name'); return }
+    setSaving(true); setError('')
+    const tripLabel = fx ? `Transport vs ${fx.opponent}${fx.age_group ? ' ' + fx.age_group : ''}` : trip === 'training' ? `Transport to training ${date}` : `Transport: ${label.trim()}`
+    const { data, error: err } = await supabase.rpc('record_transport_run', { p_trip_key: tripKey, p_fixture: fx?.id || null, p_date: date, p_amount: amt, p_method: method, p_players: [...ticked], p_label: tripLabel })
+    setSaving(false)
+    if (err) { setError(friendly(err.message)); return }
+    try { localStorage.setItem('sp-transport-amt', String(amt)) } catch {}
+    const skipped = (data?.skipped || []).length
+    onSaved(`${data?.added || 0} transport payment${data?.added === 1 ? '' : 's'} recorded (${fmtKES((data?.added || 0) * amt)})${skipped ? `. ${skipped} already had a payment for this trip and were skipped.` : '.'}`)
+  }
+
+  return (
+    <Modal title="Transport run" onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="form-grid">
+          <FormField label="Which trip?"><select value={trip} onChange={e => setTrip(e.target.value)}><option value="training">Training</option><option value="other">Another trip</option>{fixtures.map(f => <option key={f.id} value={f.id}>{f.opponent}{f.age_group ? ' ' + f.age_group : ''} · {fmtDate(f.match_date)}</option>)}</select></FormField>
+          <FormField label="Amount per child (KES) *"><input type="number" inputMode="numeric" min="1" value={amount} onChange={e => setAmount(e.target.value)} /></FormField>
+          {trip === 'other' && <FormField label="Trip name *" full><input maxLength={60} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Nakuru tournament" /></FormField>}
+          <FormField label="Date"><input type="date" max={todayNairobi()} value={date} onChange={e => setDate(e.target.value)} /></FormField>
+          <FormField label="Paid by"><select value={method} onChange={e => setMethod(e.target.value)}><option value="cash">Cash (I hold it)</option><option value="mpesa">M-Pesa to my phone (I hold it)</option><option value="bank">Straight to the club</option></select></FormField>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', margin: '12px 0' }}>
+          <input placeholder="Search name" value={q} onChange={e => setQ(e.target.value)} style={{ flex: '1 1 160px', maxWidth: 240 }} />
+          <button className="btn btn-ghost btn-sm" onClick={() => setTicked(new Set(list.filter(p => !paid.has(p.id)).map(p => p.id)))}>Tick all shown</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setTicked(new Set())}>Clear</button>
+          <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={everyone} onChange={e => setEveryone(e.target.checked)} /> Show all players</label>
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>{paid.size > 0 ? `${paid.size} already paid for this trip · ` : ''}{ticked.size} ticked now</div>
+        <div className="att-grid">
+          {list.map(p => {
+            const done = paid.has(p.id); const on = ticked.has(p.id)
+            return (
+              <div key={p.id} className={`att-row ${done || on ? 'on' : ''}`} style={done ? { opacity: 0.6, cursor: 'default' } : undefined} onClick={() => !done && toggle(p.id)}>
+                <span className="att-box">{done || on ? '✓' : ''}</span>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>
+                {done && <span className="tag" style={{ color: '#22c55e' }}>paid</span>}
+              </div>
+            )
+          })}
+        </div>
+        {list.length === 0 && <div className="empty-sub">No players to show. Try "Show all players".</div>}
+      </div>
+      <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : ticked.size ? `Save ${ticked.size} × ${fmtKES(amt)} = ${fmtKES(total)}` : 'Save'}</button>
+      </div>
+    </Modal>
   )
 }
 
@@ -1351,6 +1745,7 @@ const EVENT_ICON = Object.fromEntries(MATCH_ACTIONS.map(a => [a.type, a.icon]))
 
 function MatchCentrePage({ club, userRole, profile }) {
   const [reportFx, setReportFx] = useState(null)
+  const [mediaFx, setMediaFx] = useState(null)
   const [fixtures, setFixtures] = useState([])
   const [selected, setSelected] = useState(null)
   const [events, setEvents] = useState([])
@@ -1514,7 +1909,7 @@ function MatchCentrePage({ club, userRole, profile }) {
         {canLog && selected && (
           <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {st === 'upcoming' && windowState === 'ok' && <button className="btn btn-primary" onClick={() => startMatch(false)}>▶ Start match</button>}
-            {st === 'upcoming' && windowState !== 'ok' && isManager && windowState !== 'unset' && <button className="btn btn-ghost" onClick={() => startMatch(true)}>▶ Start anyway</button>}
+            {st === 'upcoming' && windowState !== 'ok' && <button className="btn btn-ghost" onClick={() => startMatch(true)}>▶ Start anyway</button>}
             {st === 'live' && <button className="btn btn-danger" onClick={endMatch}>■ End match</button>}
             {st === 'live' && <button className="btn btn-ghost" onClick={cancelStart}>Cancel start</button>}
             {st === 'completed' && <button className="btn btn-ghost" onClick={reopenMatch}>↩ Reopen</button>}
@@ -1524,6 +1919,7 @@ function MatchCentrePage({ club, userRole, profile }) {
       </div>
       {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
       {reportFx && <MatchReportsModal club={club} fixture={reportFx.f} profile={profile} initialTab={reportFx.tab} onClose={() => setReportFx(null)} />}
+      {mediaFx && <MatchMediaModal club={club} profile={profile} fixture={mediaFx} onClose={() => setMediaFx(null)} />}
       {fixtures.length > 0 && (
         <div className="filter-pills" style={{ marginBottom: 20, overflowX: 'auto' }}>
           {fixtures.map(f => (
@@ -1557,6 +1953,7 @@ function MatchCentrePage({ club, userRole, profile }) {
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <button className={st === 'upcoming' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setReportFx({ f: selected, tab: 'pre' })}>Pre-match plan</button>
                       {(st === 'live' || st === 'completed') && <button className={st === 'completed' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setReportFx({ f: selected, tab: 'post' })}>Post-match review</button>}
+                      <button className="btn btn-ghost" onClick={() => setMediaFx(selected)}>Photos & videos</button>
                     </div>
                     {(st === 'live' || st === 'completed') && <MatchAwardsEditor key={selected.id} club={club} fixture={selected} profile={profile} />}
                   </div>
@@ -1976,12 +2373,16 @@ function PlayerMedia({ player, club, profile, canEdit }) {
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('player_media').select('*').eq('player_id', player.id).order('created_at', { ascending: false })
-    setItems(data || [])
-    const paths = (data || []).filter(m => m.file_path).map(m => m.file_path)
-    if (paths.length) {
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrls(paths, 3600)
-      setUrls(Object.fromEntries((signed || []).filter(s => s.signedUrl).map(s => [s.path, s.signedUrl])))
-    }
+    const { data: tg } = await supabase.from('media_tags').select('item:media_items(*)').eq('player_id', player.id)
+    const tagged = (tg || []).map(r => r.item).filter(Boolean).map(m => ({ ...m, _g: true }))
+    const all = [...(data || []), ...tagged].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    setItems(all)
+    const own = all.filter(m => m.file_path && !m._g).map(m => m.file_path)
+    const gal = all.filter(m => m.file_path && m._g).map(m => m.file_path)
+    const map = {}
+    if (own.length) { const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrls(own, 3600); (signed || []).forEach(s => { if (s.signedUrl) map[s.path] = s.signedUrl }) }
+    if (gal.length) { const { data: signed } = await supabase.storage.from('sportspulse-gallery').createSignedUrls(gal, 3600); (signed || []).forEach(s => { if (s.signedUrl) map[s.path] = s.signedUrl }) }
+    setUrls(map)
   }, [player.id])
   useEffect(() => { load() }, [load])
 
@@ -2017,6 +2418,12 @@ function PlayerMedia({ player, club, profile, canEdit }) {
   }
 
   const remove = async (m) => {
+    if (m._g) {
+      if (!confirm('Remove this from the player profile? It stays in the Media centre.')) return
+      const { error } = await supabase.from('media_tags').delete().eq('media_id', m.id).eq('player_id', player.id)
+      if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setOpen(null); load() }
+      return
+    }
     if (!confirm('Delete this item? This cannot be undone.')) return
     if (m.file_path) await supabase.storage.from(BUCKET).remove([m.file_path])
     const { error } = await supabase.from('player_media').delete().eq('id', m.id)
@@ -2449,6 +2856,7 @@ const ICON_PATHS = {
   coins: <><circle cx="9" cy="9" r="6" /><path d="M15.5 7.5a6 6 0 1 1-6 8.5" /><path d="M9 6.5v5M7.5 8h3" /></>,
   wallet: <><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18" /><circle cx="16.5" cy="14.5" r="1" /></>,
   message: <path d="M4 5h16v11H9l-5 4z" />,
+  image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="1.8" /><path d="M21 16l-5-5-8 8" /></>,
   chart: <path d="M4 20V11M10 20V4M16 20v-6M22 20H2" />,
   shield: <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z" />,
   more: <><circle cx="5" cy="12" r="1.3" /><circle cx="12" cy="12" r="1.3" /><circle cx="19" cy="12" r="1.3" /></>,
@@ -2844,7 +3252,8 @@ function LedgerPage({ club, profile }) {
       <div className="page-hdr">
         <div><div className="page-title">Collections & expenses</div><div className="page-sub">Money collected, money spent, and the cash each person is holding</div></div>
         <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={() => setModal({ dir: 'in' })}>+ Collection</button>
+          <button className="btn btn-primary" onClick={() => setModal({ transport: true })}>Transport run</button>
+          <button className="btn btn-ghost" onClick={() => setModal({ dir: 'in' })}>+ Collection</button>
           <button className="btn btn-ghost" onClick={() => setModal({ dir: 'out' })}>+ Expense</button>
           <button className="btn btn-ghost" onClick={() => setModal({ handover: true })}>Hand over cash</button>
           <button className="btn btn-ghost" onClick={exportCsv}>Export CSV</button>
@@ -2976,7 +3385,9 @@ function LedgerPage({ club, profile }) {
           {!isMgr && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>You can edit or void your own entries for 24 hours. After that, ask the manager.</div>}
         </>
       )}
-      {modal?.handover
+      {modal?.transport
+        ? <TransportRunModal club={club} profile={profile} onClose={() => setModal(null)} onSaved={(t) => { setModal(null); setMsg({ kind: 'ok', text: t }); load() }} />
+        : modal?.handover
         ? <HandoverModal club={club} profile={profile} holding={mine.held} onClose={() => setModal(null)} onSaved={() => { setModal(null); setMsg({ kind: 'ok', text: 'Hand-over recorded. The manager will confirm it.' }); load() }} />
         : modal && <LedgerModal club={club} profile={profile} entry={modal.entry} startDir={modal.dir} onClose={() => setModal(null)} onSaved={() => { setModal(null); setMsg({ kind: 'ok', text: 'Saved' }); load() }} />}
     </div>
@@ -4261,6 +4672,7 @@ function App() {
       { id: 'squad', label: 'Squad', icon: <Icon name="users" /> },
       { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
       { id: 'match-centre', label: 'Match Centre', icon: <Icon name="ball" /> },
+      { id: 'media', label: 'Media', icon: <Icon name="image" /> },
       { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
       { id: 'absences', label: 'Absences', icon: <Icon name="userx" /> },
       { id: 'fees', label: 'Fees', icon: <Icon name="wallet" /> },
@@ -4274,6 +4686,7 @@ function App() {
       { id: 'squad', label: 'Squad', icon: <Icon name="users" /> },
       { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
       { id: 'match-centre', label: 'Match Centre', icon: <Icon name="ball" /> },
+      { id: 'media', label: 'Media', icon: <Icon name="image" /> },
       { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
       { id: 'absences', label: 'Absences', icon: <Icon name="userx" /> },
       { id: 'ledger', label: 'Collections', icon: <Icon name="coins" /> },
@@ -4288,6 +4701,7 @@ function App() {
       { id: 'parent-dashboard', label: 'My Children', icon: <Icon name="users" /> },
       { id: 'fixtures', label: 'Fixtures', icon: <Icon name="calendar" /> },
       { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
+      { id: 'media', label: 'Media', icon: <Icon name="image" /> },
       { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
     ],
   }
@@ -4308,6 +4722,7 @@ function App() {
       case 'training': return <TrainingPage userRole={profile.role} club={club} profile={profile} />
       case 'absences': return profile.role === 'parent' ? null : <AbsencesPage club={club} profile={profile} />
       case 'fees': return profile.role === 'manager' ? <FeesPage club={club} /> : null
+      case 'media': return <MediaCenterPage club={club} profile={profile} />
       case 'ledger': return (profile.role === 'manager' || profile.role === 'coach') ? <LedgerPage club={club} profile={profile} /> : null
       case 'messages': return <MessagesPage profile={profile} clubId={club.id} />
       case 'analytics': return <AnalyticsPage clubId={club.id} />
