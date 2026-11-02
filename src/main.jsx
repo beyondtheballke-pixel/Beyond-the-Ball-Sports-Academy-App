@@ -815,6 +815,8 @@ function FixturesPage({ club, userRole, profile: profileF }) {
   const [showAdd, setShowAdd] = useState(false)
   const [squads, setSquads] = useState([])
   const [squadFx, setSquadFx] = useState(null)
+  const [editFx, setEditFx] = useState(null)
+  const [resultFx, setResultFx] = useState(null)
   const isStaffF = userRole === 'manager' || userRole === 'coach'
 
   const load = useCallback(async () => {
@@ -864,7 +866,9 @@ function FixturesPage({ club, userRole, profile: profileF }) {
                   <div className="fixture-date">
                     {isLive && <div className="live-pulse"></div>}
                     {isLive ? `Live · ${f.minute || 0}'` : `${fmtDate(f.match_date)} · ${isResult ? 'FT' : fmtTime(f.match_date)}`}
+                    {f.age_group && <span className="tag" style={{ color: 'var(--btb-gold, #e0b43c)', marginLeft: 8 }}>{f.age_group}{FORMAT_OF[f.age_group] ? ` · ${FORMAT_OF[f.age_group]}` : ''}</span>}
                     {f.competition && <span className={`badge ${STATUS_COLORS[f.status] || 'badge-gray'}`} style={{ marginLeft: 8 }}>{f.competition}</span>}
+                    {(f.status === 'postponed' || f.status === 'cancelled') && <span className="badge badge-red" style={{ marginLeft: 8 }}>{f.status}</span>}
                   </div>
                   <div className="fixture-teams">
                     <div className="fixture-team">{homeTeam}</div>
@@ -876,30 +880,187 @@ function FixturesPage({ club, userRole, profile: profileF }) {
                   </div>
                   {f.venue && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>📍 {f.venue}</div>}
                   {!isStaffF && squads.filter(x => x.fixture_id === f.id).map((x, i) => <div key={i} style={{ fontSize: 12, marginTop: 6, color: x.role === 'unavailable' ? 'var(--red)' : 'var(--green)' }}>⚽ {x.player?.full_name?.split(' ')[0]}: {x.role === 'starter' ? 'in the starting team' : x.role === 'sub' ? 'on the bench' : 'not available'}</div>)}
-                  {isStaffF && f.status !== 'completed' && <div style={{ marginTop: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setSquadFx(f)}>Squad ({squads.filter(x => x.fixture_id === f.id && x.role !== 'unavailable').length})</button></div>}
-                  {isStaffF && f.status === 'completed' && <div style={{ marginTop: 8 }}><button className="btn btn-ghost btn-sm" onClick={() => setSquadFx(f)}>Squad & notes</button></div>}
+                  {f.status === 'completed' && f.match_report && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, whiteSpace: 'pre-wrap' }}>{f.match_report}</div>}
+                  {isStaffF && <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <button className="btn btn-ghost btn-sm" onClick={() => setSquadFx(f)}>{f.status === 'completed' ? 'Squad & notes' : `Squad (${squads.filter(x => x.fixture_id === f.id && x.role !== 'unavailable').length})`}</button>
+                    {f.status !== 'live' && <button className="btn btn-primary btn-sm" onClick={() => setResultFx(f)}>{f.status === 'completed' ? 'Edit result' : 'Enter result'}</button>}
+                    <button className="btn btn-ghost btn-sm" onClick={() => setEditFx(f)}>Edit match</button>
+                  </div>}
                 </div>
               )
             })}
           </div>
         )}
+      {editFx && <EditFixtureModal fixture={editFx} onClose={() => setEditFx(null)} onSaved={() => { setEditFx(null); load() }} />}
+      {resultFx && <MatchResultModal club={club} fixture={resultFx} onClose={() => setResultFx(null)} onSaved={() => { setResultFx(null); load() }} />}
       {squadFx && <MatchSquadModal club={club} fixture={squadFx} profile={profileF} onClose={() => setSquadFx(null)} onSaved={() => { setSquadFx(null); load() }} />}
       {showAdd && <AddFixtureModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
     </div>
   )
 }
 
+// ---------- Matches: age categories, edit, and entering a result without the Match Centre
+const toNairobiISO = (date, time) => new Date(`${date}T${time || '00:00'}:00+03:00`).toISOString()
+const COMPETITIONS = ['Friendly', 'Holiday Programme', 'Academy League', 'Tournament', 'Other']
+
+function AgeChips({ value, onChange, single = false }) {
+  const toggle = (g) => onChange(single ? (value.includes(g) ? [] : [g]) : value.includes(g) ? value.filter(x => x !== g) : [...value, g])
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {AGE_GROUPS.map(g => (
+        <button key={g} type="button" onClick={() => toggle(g)} className="btn btn-sm" style={{ background: value.includes(g) ? 'var(--btb-gold, #e0b43c)' : 'transparent', color: value.includes(g) ? '#000' : 'var(--text-muted)', border: `1px solid ${value.includes(g) ? 'var(--btb-gold, #e0b43c)' : 'var(--border)'}`, minWidth: 54 }}>{g}{FORMAT_OF[g] ? ` · ${FORMAT_OF[g]}` : ''}</button>
+      ))}
+    </div>
+  )
+}
+
+function EditFixtureModal({ fixture, onClose, onSaved }) {
+  const [f, setF] = useState({ opponent: fixture.opponent, competition: fixture.competition || 'Friendly', venue: fixture.venue || '', is_home: fixture.is_home, match_date: nairobiDate(fixture.match_date), match_time: nairobiTime(fixture.match_date) === '00:00' ? '' : nairobiTime(fixture.match_date), age_group: fixture.age_group || '' })
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const save = async () => {
+    if (!f.opponent.trim() || !f.match_date) { setError('Opponent and date are required'); return }
+    setSaving(true); setError('')
+    const { error: err } = await supabase.from('fixtures').update({ opponent: f.opponent.trim(), competition: f.competition, venue: f.venue.trim() || null, is_home: f.is_home, match_date: toNairobiISO(f.match_date, f.match_time), age_group: f.age_group || null }).eq('id', fixture.id)
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title="Edit match" onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="form-grid">
+          <FormField label="Opponent *" full><input value={f.opponent} onChange={e => set('opponent', e.target.value)} /></FormField>
+          <FormField label="Age category"><select value={f.age_group} onChange={e => set('age_group', e.target.value)}><option value="">Whole academy / not set</option>{AGE_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}</select></FormField>
+          <FormField label="Competition"><select value={f.competition} onChange={e => set('competition', e.target.value)}>{[...new Set([f.competition, ...COMPETITIONS])].map(c => <option key={c}>{c}</option>)}</select></FormField>
+          <FormField label="Date *"><input type="date" value={f.match_date} onChange={e => set('match_date', e.target.value)} /></FormField>
+          <FormField label="Kick-off time (blank = Time TBA)"><input type="time" value={f.match_time} onChange={e => set('match_time', e.target.value)} /></FormField>
+          <FormField label="Home / Away"><select value={String(f.is_home)} onChange={e => set('is_home', e.target.value === 'true')}><option value="true">Home</option><option value="false">Away</option></select></FormField>
+          <FormField label="Venue" full><input value={f.venue} onChange={e => set('venue', e.target.value)} placeholder="e.g. Thunguma Youth Empowerment Center" /></FormField>
+        </div>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+    </Modal>
+  )
+}
+
+function MatchResultModal({ club, fixture, onClose, onSaved }) {
+  const [players, setPlayers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [blocked, setBlocked] = useState(false)
+  const [status, setStatus] = useState(fixture.status === 'postponed' || fixture.status === 'cancelled' ? fixture.status : 'completed')
+  const [ours, setOurs] = useState(0); const [theirs, setTheirs] = useState(0)
+  const [scorers, setScorers] = useState([])   // {player_id, assist_player_id, minute, type}
+  const [cards, setCards] = useState([])        // {player_id, type, minute}
+  const [report, setReport] = useState(fixture.match_report || '')
+  const [allAges, setAllAges] = useState(!fixture.age_group)
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('players').select('id,full_name,squad_number,date_of_birth,age_group_override').eq('club_id', club.id).eq('is_active', true).in('status', ['active', 'injured']).order('full_name'),
+      supabase.from('match_events').select('event_type,player_id,assist_player_id,minute,notes').eq('fixture_id', fixture.id),
+    ]).then(([{ data: pl }, { data: ev }]) => {
+      setPlayers(pl || [])
+      const evs = ev || []
+      if (evs.some(e => (e.notes || '') !== 'manual')) setBlocked(true)
+      else if (evs.length) {
+        const goals = evs.filter(e => e.event_type === 'goal' || e.event_type === 'penalty')
+        setScorers(goals.filter(e => e.player_id).map(e => ({ type: e.event_type, player_id: e.player_id, assist_player_id: e.assist_player_id || '', minute: e.minute || '' })))
+        setOurs(goals.length); setTheirs(evs.filter(e => e.event_type === 'opponent_goal').length)
+        setCards(evs.filter(e => e.event_type === 'yellow_card' || e.event_type === 'red_card').map(e => ({ type: e.event_type, player_id: e.player_id, minute: e.minute || '' })))
+      } else if (fixture.status === 'completed') { setOurs((fixture.is_home ? fixture.home_score : fixture.away_score) || 0); setTheirs((fixture.is_home ? fixture.away_score : fixture.home_score) || 0) }
+      setLoading(false)
+    })
+  }, [club.id, fixture.id])
+
+  const list = players.filter(p => allAges || !fixture.age_group || ageGroupOf(p) === fixture.age_group)
+  const opts = <>{<option value="">Select player</option>}{list.map(p => <option key={p.id} value={p.id}>{p.full_name} ({ageGroupOf(p)})</option>)}</>
+  const upd = (setter, i, k, v) => setter(a => a.map((x, j) => j === i ? { ...x, [k]: v } : x))
+
+  const save = async () => {
+    setError('')
+    if (status === 'completed') {
+      if (scorers.some(s => !s.player_id)) { setError('Choose a player for every scorer, or remove the row'); return }
+      if (cards.some(c => !c.player_id)) { setError('Choose a player for every card, or remove the row'); return }
+      if (scorers.length > ours) { setError(`You listed ${scorers.length} scorers but our score is ${ours}. Raise our score or remove a scorer.`); return }
+    }
+    setSaving(true)
+    const events = status === 'completed' ? [...scorers.map(s => ({ type: s.type, player_id: s.player_id, assist_player_id: s.assist_player_id || null, minute: parseInt(s.minute) || 0 })), ...cards.map(c => ({ type: c.type, player_id: c.player_id, minute: parseInt(c.minute) || 0 }))] : []
+    const { error: err } = await supabase.rpc('save_match_result', { p_fixture: fixture.id, p_status: status, p_unknown_goals: status === 'completed' ? ours - scorers.length : 0, p_opp_goals: status === 'completed' ? theirs : 0, p_events: events, p_report: report })
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+
+  return (
+    <Modal title={`Match details · vs ${fixture.opponent}${fixture.age_group ? ' · ' + fixture.age_group : ''}`} onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        {loading ? <Spinner /> : blocked ? (
+          <Note kind="warn">This match was recorded live in the Match Centre, so its details can only be changed there.</Note>
+        ) : (
+          <>
+            {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+            <div className="filter-pills" style={{ marginBottom: 12 }}>
+              {[['completed', 'Played'], ['postponed', 'Postponed'], ['cancelled', 'Cancelled']].map(([k, l]) => <button key={k} className={`pill ${status === k ? 'active' : ''}`} onClick={() => setStatus(k)}>{l}</button>)}
+            </div>
+            {status === 'completed' && (
+              <>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+                  <FormField label={`${club.short_name || 'BTB'} goals`}><input type="number" min="0" max="30" value={ours} onChange={e => setOurs(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: 90 }} /></FormField>
+                  <div style={{ fontWeight: 700, paddingTop: 18 }}>–</div>
+                  <FormField label={`${fixture.opponent} goals`}><input type="number" min="0" max="30" value={theirs} onChange={e => setTheirs(Math.max(0, parseInt(e.target.value) || 0))} style={{ width: 90 }} /></FormField>
+                </div>
+                <div style={{ fontWeight: 700, fontSize: 13, margin: '8px 0' }}>Our goal scorers (optional)</div>
+                {scorers.map((s, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    <select value={s.player_id} onChange={e => upd(setScorers, i, 'player_id', e.target.value)} style={{ flex: 2, minWidth: 150 }}>{opts}</select>
+                    <select value={s.assist_player_id} onChange={e => upd(setScorers, i, 'assist_player_id', e.target.value)} style={{ flex: 2, minWidth: 130 }}><option value="">No assist</option>{list.filter(p => p.id !== s.player_id).map(p => <option key={p.id} value={p.id}>Assist: {p.full_name}</option>)}</select>
+                    <input type="number" min="0" max="120" placeholder="Min" value={s.minute} onChange={e => upd(setScorers, i, 'minute', e.target.value)} style={{ width: 70 }} />
+                    <button className="btn btn-ghost btn-sm" onClick={() => setScorers(a => a.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                ))}
+                <button className="btn btn-ghost btn-sm" onClick={() => setScorers(a => [...a, { type: 'goal', player_id: '', assist_player_id: '', minute: '' }])} disabled={scorers.length >= ours}>+ Add scorer</button>
+                {ours > scorers.length && scorers.length > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>{ours - scorers.length} goal{ours - scorers.length === 1 ? '' : 's'} without a named scorer.</div>}
+
+                <div style={{ fontWeight: 700, fontSize: 13, margin: '16px 0 8px' }}>Cards (optional)</div>
+                {cards.map((c, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                    <select value={c.player_id} onChange={e => upd(setCards, i, 'player_id', e.target.value)} style={{ flex: 2, minWidth: 150 }}>{opts}</select>
+                    <select value={c.type} onChange={e => upd(setCards, i, 'type', e.target.value)} style={{ width: 100 }}><option value="yellow_card">Yellow</option><option value="red_card">Red</option></select>
+                    <input type="number" min="0" max="120" placeholder="Min" value={c.minute} onChange={e => upd(setCards, i, 'minute', e.target.value)} style={{ width: 70 }} />
+                    <button className="btn btn-ghost btn-sm" onClick={() => setCards(a => a.filter((_, j) => j !== i))}>✕</button>
+                  </div>
+                ))}
+                <button className="btn btn-ghost btn-sm" onClick={() => setCards(a => [...a, { type: 'yellow_card', player_id: '', minute: '' }])}>+ Add card</button>
+                {fixture.age_group && <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, marginTop: 14 }}><input type="checkbox" style={{ width: 'auto' }} checked={allAges} onChange={e => setAllAges(e.target.checked)} /> Show players from other age groups too</label>}
+              </>
+            )}
+            <FormField label="Match report (optional, parents can read it)"><textarea rows={3} maxLength={2000} value={report} onChange={e => setReport(e.target.value)} placeholder="How did the game go?" /></FormField>
+          </>
+        )}
+      </div>
+      <div className="modal-footer">
+        <button className="btn btn-ghost" onClick={onClose}>Close</button>
+        {!blocked && <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : 'Save match details'}</button>}
+      </div>
+    </Modal>
+  )
+}
+
 function AddFixtureModal({ club, onClose, onSaved }) {
-  const [form, setForm] = useState({ opponent: '', competition: 'KPL', match_date: '', match_time: '15:00', venue: '', is_home: true })
+  const [form, setForm] = useState({ opponent: '', competition: 'Friendly', match_date: '', match_time: '', venue: '', is_home: true })
+  const [ages, setAges] = useState([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }))
 
   const save = async () => {
-    if (!form.opponent || !form.match_date) { setError('Opponent and date are required'); return }
+    if (!form.opponent.trim() || !form.match_date) { setError('Opponent and date are required'); return }
+    if (ages.length === 0) { setError('Choose which age categories will play, or tick "Whole academy"'); return }
     setSaving(true)
-    const match_date = new Date(`${form.match_date}T${form.match_time}:00`).toISOString()
-    const { error: err } = await supabase.from('fixtures').insert({ club_id: club.id, opponent: form.opponent, competition: form.competition, match_date, venue: form.venue || null, is_home: form.is_home, status: 'upcoming' })
+    const match_date = toNairobiISO(form.match_date, form.match_time)
+    const groups = ages.includes('ALL') ? [null] : ages
+    const { error: err } = await supabase.from('fixtures').insert(groups.map(g => ({ club_id: club.id, opponent: form.opponent.trim(), competition: form.competition, match_date, venue: form.venue.trim() || null, is_home: form.is_home, status: 'upcoming', age_group: g })))
     if (err) { setError(friendly(err.message)); setSaving(false); return }
     onSaved()
   }
@@ -910,16 +1071,22 @@ function AddFixtureModal({ club, onClose, onSaved }) {
         {error && <div className="alert alert-red">{error}</div>}
         <div className="form-grid">
           <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Opponent *</label><input value={form.opponent} onChange={e => set('opponent', e.target.value)} placeholder="e.g. Nyeri United FC" /></div>
-          <div className="form-group"><label>Competition</label><select value={form.competition} onChange={e => set('competition', e.target.value)}>{['KPL', 'FKF Cup', 'Super Cup', 'Friendly', 'Regional League', 'Academy League', 'Other'].map(c => <option key={c}>{c}</option>)}</select></div>
+          <div className="form-group"><label>Competition</label><select value={form.competition} onChange={e => set('competition', e.target.value)}>{COMPETITIONS.map(c => <option key={c}>{c}</option>)}</select></div>
           <div className="form-group"><label>Home / Away</label><select value={String(form.is_home)} onChange={e => set('is_home', e.target.value === 'true')}><option value="true">Home</option><option value="false">Away</option></select></div>
           <div className="form-group"><label>Date *</label><input type="date" value={form.match_date} onChange={e => set('match_date', e.target.value)} /></div>
-          <div className="form-group"><label>Kick-off time</label><input type="time" value={form.match_time} onChange={e => set('match_time', e.target.value)} /></div>
+          <div className="form-group"><label>Kick-off time (leave blank if not known yet)</label><input type="time" value={form.match_time} onChange={e => set('match_time', e.target.value)} /></div>
           <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>Venue</label><input value={form.venue} onChange={e => set('venue', e.target.value)} placeholder="e.g. PCEA Primary Pitch, Nyeri" /></div>
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+            <label>Which age categories will play? *</label>
+            <AgeChips value={ages.filter(x => x !== 'ALL')} onChange={v => setAges(v)} />
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12, marginTop: 8 }}><input type="checkbox" style={{ width: 'auto' }} checked={ages.includes('ALL')} onChange={e => setAges(e.target.checked ? ['ALL'] : [])} /> Whole academy (one match, no category)</label>
+            {ages.filter(x => x !== 'ALL').length > 1 && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>{ages.length} matches will be created, one per category, so each gets its own score, squad and result.</div>}
+          </div>
         </div>
       </div>
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save fixture'}</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : ages.length > 1 ? `Create ${ages.length} matches` : 'Save fixture'}</button>
       </div>
     </Modal>
   )
@@ -1078,12 +1245,12 @@ function MatchCentrePage({ club, userRole }) {
       case 'goal': return <>Goal{who && <> — <strong>{who}</strong></>}{e.assist?.full_name && <> (assist {e.assist.full_name})</>}</>
       case 'penalty': return <>Penalty scored{who && <> — <strong>{who}</strong></>}</>
       case 'penalty_missed': return <>Penalty missed{who && <> — <strong>{who}</strong></>}</>
-      case 'opponent_goal': return <>Goal for {selected.opponent}{e.notes && <> ({e.notes})</>}</>
+      case 'opponent_goal': return <>Goal for {selected.opponent}{e.notes && e.notes !== 'manual' && <> ({e.notes})</>}</>
       case 'own_goal': return <>Own goal{who && <> — <strong>{who}</strong></>}</>
       case 'yellow_card': return <>Yellow card{who && <> — <strong>{who}</strong></>}</>
       case 'red_card': return <>Red card{who && <> — <strong>{who}</strong></>}</>
       case 'substitution': return <>Substitution — <strong>{who}</strong> on, <strong>{e.off?.full_name}</strong> off</>
-      case 'injury': return <>Injury{who && <> — <strong>{who}</strong></>}{e.notes && <> ({e.notes})</>}</>
+      case 'injury': return <>Injury{who && <> — <strong>{who}</strong></>}{e.notes && e.notes !== 'manual' && <> ({e.notes})</>}</>
       default: return <>{e.notes || e.event_type}</>
     }
   }
@@ -1099,7 +1266,7 @@ function MatchCentrePage({ club, userRole }) {
   return (
     <div className="page">
       <div className="page-hdr">
-        <div><div className="page-title">Match centre</div><div className="page-sub">{selected ? `${club.short_name || 'BTB'} vs ${selected.opponent}` : 'No matches'}</div></div>
+        <div><div className="page-title">Match centre</div><div className="page-sub">{selected ? `${club.short_name || 'BTB'} vs ${selected.opponent}${selected.age_group ? ' · ' + selected.age_group : ''}` : 'No matches'}</div></div>
         {canLog && selected && (
           <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {st === 'upcoming' && windowState === 'ok' && <button className="btn btn-primary" onClick={() => startMatch(false)}>▶ Start match</button>}
@@ -1116,7 +1283,7 @@ function MatchCentrePage({ club, userRole }) {
         <div className="filter-pills" style={{ marginBottom: 20, overflowX: 'auto' }}>
           {fixtures.map(f => (
             <button key={f.id} className={`pill ${selected?.id === f.id ? 'active' : ''}`} onClick={() => choose(f)}>
-              {f.status === 'live' ? '● ' : ''}{f.opponent.length > 18 ? f.opponent.slice(0, 16) + '…' : f.opponent} · {fmtDate(f.match_date)}
+              {f.status === 'live' ? '● ' : ''}{f.opponent.length > 18 ? f.opponent.slice(0, 16) + '…' : f.opponent}{f.age_group ? ' ' + f.age_group : ''} · {fmtDate(f.match_date)}
             </button>
           ))}
         </div>
@@ -1742,7 +1909,7 @@ function MatchSquadModal({ club, fixture, profile, onClose, onSaved }) {
   const [orig, setOrig] = useState({})
   const [notes, setNotes] = useState('')
   const [search, setSearch] = useState('')
-  const [age, setAge] = useState('all')
+  const [age, setAge] = useState(fixture.age_group || 'all')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
