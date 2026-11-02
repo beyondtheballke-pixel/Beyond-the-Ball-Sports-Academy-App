@@ -372,6 +372,7 @@ function ManagerDashboard({ club, profile, setPage }) {
         </div>
       </div>
       <AttentionTiles club={club} pending={stats.pending} setPage={setPage} />
+      <CashCard club={club} profile={profile} setPage={setPage} />
       {liveFixture && (
         <div className="alert alert-green" style={{ marginBottom: 16 }}>
           <div className="live-pulse"></div>
@@ -2625,20 +2626,39 @@ function AddTrainingModal({ club, onClose, onSaved }) {
 
 const FEE_TYPES = [{ key: 'transport', label: 'Transport' }, { key: 'kit', label: 'Kit' }, { key: 'monthly', label: 'Monthly training' }, { key: 'registration', label: 'Registration' }, { key: 'other', label: 'Other' }]
 
-// ---------- Collections & payments ledger (manager only, keyed in by hand)
+// ---------- Collections, expenses and cash custody (coaches + manager)
 const LEDGER_CATS = {
-  transport: 'Transport', tournament_fee: 'Tournament / entry fee', kit: 'Kits', equipment: 'Equipment', pitch: 'Pitch hire', referee: 'Referee', refreshments: 'Refreshments',
-  medical: 'Medical / first aid', stipend: 'Coach stipend', sponsorship: 'Sponsorship', donation: 'Donation', fundraising: 'Fundraising', other: 'Other',
+  transport: 'Transport', lunch: 'Lunch', snacks: 'Snacks', training_fee: 'Training fees', kit: 'Kits', boots: 'Boots', tournament_fee: 'Tournament / entry fee', equipment: 'Equipment',
+  pitch: 'Pitch hire', referee: 'Referee', refreshments: 'Refreshments', medical: 'Medical / first aid', stipend: 'Coach stipend', sponsorship: 'Sponsorship', donation: 'Donation', fundraising: 'Fundraising', other: 'Other',
 }
-const CATS_IN = ['transport', 'tournament_fee', 'kit', 'sponsorship', 'donation', 'fundraising', 'other']
-const CATS_OUT = ['transport', 'tournament_fee', 'kit', 'equipment', 'pitch', 'referee', 'refreshments', 'medical', 'stipend', 'other']
-const METHODS = [['cash', 'Cash'], ['mpesa', 'M-Pesa'], ['bank', 'Bank'], ['other', 'Other']]
+const CATS_IN = ['transport', 'lunch', 'training_fee', 'kit', 'boots', 'tournament_fee', 'sponsorship', 'donation', 'fundraising', 'other']
+const CATS_OUT = ['transport', 'lunch', 'snacks', 'kit', 'boots', 'equipment', 'pitch', 'referee', 'medical', 'tournament_fee', 'stipend', 'other']
+const METHODS_IN = [['cash', 'Cash (I am holding it)'], ['mpesa', 'M-Pesa to my phone (I am holding it)'], ['bank', 'Straight to the club account / till'], ['other', 'Other']]
+const METHOD_LABEL = { cash: 'Cash', mpesa: 'M-Pesa', bank: 'Bank / club till', other: 'Other' }
+const SOURCES = [['cash', 'From money I am holding'], ['personal', 'My own money (reimburse me)'], ['other', 'Paid directly by the club']]
+const HELD_METHODS = ['cash', 'mpesa']
+const LEDGER_SELECT = '*, creator:profiles!ledger_entries_created_by_fkey(full_name), player:players(full_name), fixture:fixtures(opponent,age_group,match_date)'
+
+// Money each person is holding: collected (cash / M-Pesa to their phone) - spent from it - handed over
+function cashPositions(rows) {
+  const m = {}
+  rows.filter(r => !r.voided).forEach(r => {
+    const p = m[r.created_by] || (m[r.created_by] = { id: r.created_by, name: r.creator?.full_name || 'Unknown', cashIn: 0, spent: 0, handed: 0, pending: 0, pendingN: 0, owed: 0, last: null })
+    if (r.direction === 'in' && HELD_METHODS.includes(r.method)) p.cashIn += r.amount
+    if (r.direction === 'out' && r.source === 'cash') p.spent += r.amount
+    if (r.direction === 'out' && r.source === 'personal' && !r.reimbursed) p.owed += r.amount
+    if (r.direction === 'handover') { p.handed += r.amount; if (r.handover_status === 'reported') { p.pending += r.amount; p.pendingN++ } }
+    if (!p.last || r.created_at > p.last) p.last = r.created_at
+  })
+  Object.values(m).forEach(p => { p.held = p.cashIn - p.spent - p.handed })
+  return m
+}
 
 function LedgerModal({ club, profile, entry, startDir, onClose, onSaved }) {
   const editing = !!entry
   const [f, setF] = useState({
     direction: entry?.direction || startDir || 'in', category: entry?.category || 'transport', amount: entry?.amount ?? '', entry_date: entry?.entry_date || todayNairobi(),
-    counterparty: entry?.counterparty || '', method: entry?.method || 'cash', reference: entry?.reference || '', notes: entry?.notes || '', player_id: entry?.player_id || '', fixture_id: entry?.fixture_id || '',
+    counterparty: entry?.counterparty || '', method: entry?.method || 'cash', source: entry?.source || 'cash', reference: entry?.reference || '', notes: entry?.notes || '', player_id: entry?.player_id || '', fixture_id: entry?.fixture_id || '',
   })
   const [players, setPlayers] = useState([]); const [fixtures, setFixtures] = useState([])
   const [saving, setSaving] = useState(false); const [error, setError] = useState('')
@@ -2647,15 +2667,16 @@ function LedgerModal({ club, profile, entry, startDir, onClose, onSaved }) {
     supabase.from('players').select('id,full_name').eq('club_id', club.id).eq('is_active', true).order('full_name').then(({ data }) => setPlayers(data || []))
     supabase.from('fixtures').select('id,opponent,match_date,age_group').eq('club_id', club.id).order('match_date', { ascending: false }).limit(60).then(({ data }) => setFixtures(data || []))
   }, [club.id])
-  const cats = f.direction === 'in' ? CATS_IN : CATS_OUT
-  const changeDir = (d) => setF(x => ({ ...x, direction: d, category: (d === 'in' ? CATS_IN : CATS_OUT).includes(x.category) ? x.category : 'other', player_id: d === 'out' ? '' : x.player_id }))
+  const isIn = f.direction === 'in'
+  const cats = isIn ? CATS_IN : CATS_OUT
+  const changeDir = (d) => setF(x => ({ ...x, direction: d, category: (d === 'in' ? CATS_IN : CATS_OUT).includes(x.category) ? x.category : 'other', player_id: d === 'out' ? '' : x.player_id, method: d === 'in' ? (['cash', 'mpesa', 'bank', 'other'].includes(x.method) ? x.method : 'cash') : x.method }))
   const save = async () => {
     const amt = parseInt(f.amount)
     if (!amt || amt < 1) { setError('Enter the amount'); return }
     if (amt > 10000000) { setError('That amount looks too large. Check it.'); return }
     if (!f.entry_date) { setError('Choose the date'); return }
     setSaving(true); setError('')
-    const row = { direction: f.direction, category: f.category, amount: amt, entry_date: f.entry_date, counterparty: f.counterparty.trim() || null, method: f.method || null, reference: f.reference.trim() || null, notes: f.notes.trim() || null, player_id: f.direction === 'in' && f.player_id ? f.player_id : null, fixture_id: f.fixture_id || null }
+    const row = { direction: f.direction, category: f.category, amount: amt, entry_date: f.entry_date, counterparty: f.counterparty.trim() || null, method: isIn ? f.method : (f.source === 'other' ? 'other' : f.method), source: isIn ? null : f.source, reference: f.reference.trim() || null, notes: f.notes.trim() || null, player_id: isIn && f.player_id ? f.player_id : null, fixture_id: f.fixture_id || null }
     const { error: err } = editing
       ? await supabase.from('ledger_entries').update(row).eq('id', entry.id)
       : await supabase.from('ledger_entries').insert({ ...row, club_id: club.id, created_by: profile.id })
@@ -2663,37 +2684,120 @@ function LedgerModal({ club, profile, entry, startDir, onClose, onSaved }) {
     if (err) setError(friendly(err.message)); else onSaved()
   }
   return (
-    <Modal title={editing ? 'Edit entry' : f.direction === 'in' ? 'Record a collection' : 'Record a payment'} onClose={onClose}>
+    <Modal title={editing ? 'Edit entry' : isIn ? 'Record a collection' : 'Record an expense'} onClose={onClose}>
       <div className="modal-body">
         {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
-        <div className="filter-pills" style={{ marginBottom: 12 }}>
-          <button className={`pill ${f.direction === 'in' ? 'active' : ''}`} onClick={() => changeDir('in')}>Money collected</button>
-          <button className={`pill ${f.direction === 'out' ? 'active' : ''}`} onClick={() => changeDir('out')}>Money paid out</button>
-        </div>
+        {!editing && <div className="filter-pills" style={{ marginBottom: 12 }}>
+          <button className={`pill ${isIn ? 'active' : ''}`} onClick={() => changeDir('in')}>Money collected</button>
+          <button className={`pill ${!isIn ? 'active' : ''}`} onClick={() => changeDir('out')}>Money spent</button>
+        </div>}
         <div className="form-grid">
           <FormField label="What is it for? *"><select value={f.category} onChange={e => set('category', e.target.value)}>{cats.map(c => <option key={c} value={c}>{LEDGER_CATS[c]}</option>)}</select></FormField>
           <FormField label="Amount (KES) *"><input type="number" inputMode="numeric" min="1" value={f.amount} onChange={e => set('amount', e.target.value)} /></FormField>
           <FormField label="Date *"><input type="date" max={todayNairobi()} value={f.entry_date} onChange={e => set('entry_date', e.target.value)} /></FormField>
-          <FormField label="Method"><select value={f.method} onChange={e => set('method', e.target.value)}>{METHODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></FormField>
-          <FormField label={f.direction === 'in' ? 'Received from' : 'Paid to'} full><input maxLength={120} value={f.counterparty} onChange={e => set('counterparty', e.target.value)} placeholder={f.direction === 'in' ? 'e.g. Parents of the U11 team' : 'e.g. Nyeri Shuttle Services'} /></FormField>
-          <FormField label="M-Pesa code / reference"><input maxLength={60} value={f.reference} onChange={e => set('reference', e.target.value)} /></FormField>
+          {isIn
+            ? <FormField label="How did it come in? *"><select value={f.method} onChange={e => set('method', e.target.value)}>{METHODS_IN.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></FormField>
+            : <FormField label="Paid from *"><select value={f.source} onChange={e => set('source', e.target.value)}>{SOURCES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></FormField>}
+          <FormField label={isIn ? 'Received from' : 'Paid to'} full><input maxLength={120} value={f.counterparty} onChange={e => set('counterparty', e.target.value)} placeholder={isIn ? 'e.g. Mrs Wanjiru (Brian\'s mum), or U11 parents' : 'e.g. Nyeri Shuttle Services'} /></FormField>
+          <FormField label="M-Pesa code / receipt no."><input maxLength={60} value={f.reference} onChange={e => set('reference', e.target.value)} /></FormField>
           <FormField label="Linked match (optional)"><select value={f.fixture_id} onChange={e => set('fixture_id', e.target.value)}><option value="">None</option>{fixtures.map(x => <option key={x.id} value={x.id}>{x.opponent}{x.age_group ? ' ' + x.age_group : ''} · {fmtDate(x.match_date)}</option>)}</select></FormField>
-          {f.direction === 'in' && <FormField label="Linked player (optional)" full><select value={f.player_id} onChange={e => set('player_id', e.target.value)}><option value="">None</option>{players.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></FormField>}
+          {isIn && <FormField label="Which child is this for? (optional)" full><select value={f.player_id} onChange={e => set('player_id', e.target.value)}><option value="">Not for one child</option>{players.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></FormField>}
           <FormField label="Notes" full><textarea rows={2} maxLength={500} value={f.notes} onChange={e => set('notes', e.target.value)} placeholder="e.g. 18 children x KES 300, bus to Karatina" /></FormField>
         </div>
-        {f.direction === 'in' && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>For a charge you want to bill one child (and track who has paid), add it as a fee on the Fees page instead.</div>}
+        {isIn && f.category === 'training_fee' && <div style={{ fontSize: 11, color: 'var(--btb-gold)', marginTop: 8 }}>Remember the manager still needs to mark the child's fee as paid on the Fees page.</div>}
+        {isIn && HELD_METHODS.includes(f.method) && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>This adds to the money you are holding until you hand it over.</div>}
       </div>
       <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
     </Modal>
   )
 }
 
+function HandoverModal({ club, profile, holding, onClose, onSaved }) {
+  const [f, setF] = useState({ amount: holding > 0 ? holding : '', dest: 'till', method: 'cash', reference: '', entry_date: todayNairobi(), notes: '' })
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  const save = async () => {
+    const amt = parseInt(f.amount)
+    if (!amt || amt < 1) { setError('Enter the amount'); return }
+    if (amt > holding) { setError(`You only hold ${fmtKES(Math.max(holding, 0))}. Record any missing collections first, then hand over.`); return }
+    setSaving(true); setError('')
+    const { error: err } = await supabase.from('ledger_entries').insert({ club_id: club.id, created_by: profile.id, direction: 'handover', category: 'other', amount: amt, entry_date: f.entry_date, dest: f.dest, handover_status: 'reported', method: f.method, reference: f.reference.trim() || null, notes: f.notes.trim() || null })
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title="Hand over cash" onClose={onClose}>
+      <div className="modal-body">
+        <Note kind="info" style={{ marginBottom: 12 }}>You are holding <strong>{fmtKES(Math.max(holding, 0))}</strong>. The manager will confirm when they have received it.</Note>
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="filter-pills" style={{ marginBottom: 12 }}>
+          <button className={`pill ${f.dest === 'till' ? 'active' : ''}`} onClick={() => set('dest', 'till')}>Deposited to the till</button>
+          <button className={`pill ${f.dest === 'manager' ? 'active' : ''}`} onClick={() => set('dest', 'manager')}>Sent / given to the manager</button>
+        </div>
+        <div className="form-grid">
+          <FormField label="Amount (KES) *"><input type="number" inputMode="numeric" min="1" value={f.amount} onChange={e => set('amount', e.target.value)} /></FormField>
+          <FormField label="Date *"><input type="date" max={todayNairobi()} value={f.entry_date} onChange={e => set('entry_date', e.target.value)} /></FormField>
+          <FormField label="How?"><select value={f.method} onChange={e => set('method', e.target.value)}><option value="cash">Cash handed over</option><option value="mpesa">M-Pesa sent</option><option value="bank">Bank deposit</option></select></FormField>
+          <FormField label="M-Pesa code / receipt no."><input maxLength={60} value={f.reference} onChange={e => set('reference', e.target.value)} /></FormField>
+          <FormField label="Notes" full><input maxLength={500} value={f.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional" /></FormField>
+        </div>
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Record hand-over'}</button></div>
+    </Modal>
+  )
+}
+
+function CashCard({ club, profile, setPage }) {
+  const [rows, setRows] = useState(null)
+  useEffect(() => { supabase.from('ledger_entries').select(LEDGER_SELECT).eq('club_id', club.id).limit(2000).then(({ data }) => setRows(data || [])) }, [club.id])
+  if (!rows) return null
+  const pos = cashPositions(rows)
+  const isMgr = profile.role === 'manager'
+  const list = Object.values(pos).filter(p => p.held !== 0 || p.pendingN || p.owed).sort((a, b) => b.held - a.held)
+  const totalHeld = list.reduce((a, p) => a + Math.max(p.held, 0), 0)
+  const mine = pos[profile.id]
+  const pendingAll = list.reduce((a, p) => a + p.pending, 0)
+  if (!isMgr && !mine) return (
+    <div className="card" style={{ marginBottom: 16 }}><div className="card-hdr"><div className="card-title">Collections</div></div><div className="card-body"><button className="btn btn-primary" onClick={() => setPage('ledger')}>Record a collection or expense</button></div></div>
+  )
+  return (
+    <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-hdr"><div className="card-title">{isMgr ? 'Cash with the team' : 'Cash I am holding'}</div><button className="btn btn-ghost btn-sm" onClick={() => setPage('ledger')}>Open</button></div>
+      <div className="card-body">
+        {isMgr ? (
+          <>
+            <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', marginBottom: 10 }}>
+              <div><div style={{ fontSize: 22, fontWeight: 700 }}>{fmtKES(totalHeld)}</div><div style={{ fontSize: 12, color: 'var(--text-muted)' }}>held by staff right now</div></div>
+              {pendingAll > 0 && <div><div style={{ fontSize: 22, fontWeight: 700, color: 'var(--btb-gold)' }}>{fmtKES(pendingAll)}</div><div style={{ fontSize: 12, color: 'var(--text-muted)' }}>hand-overs to confirm</div></div>}
+            </div>
+            {list.length === 0 ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>No cash recorded yet.</div> : list.slice(0, 6).map(p => (
+              <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0', borderTop: '0.5px solid var(--border)', fontSize: 13, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600 }}>{p.name}</span>
+                <span>{fmtKES(p.held)}{p.pendingN ? <span className="tag" style={{ color: 'var(--btb-gold)', marginLeft: 8 }}>{p.pendingN} to confirm</span> : null}{p.owed ? <span className="tag" style={{ color: 'var(--text-muted)', marginLeft: 8 }}>owed {fmtKES(p.owed)}</span> : null}</span>
+              </div>
+            ))}
+          </>
+        ) : (
+          <>
+            <div style={{ fontSize: 24, fontWeight: 700 }}>{fmtKES(Math.max(mine.held, 0))}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>{mine.pending ? `${fmtKES(mine.pending)} handed over, waiting for the manager to confirm` : 'Collections minus what you spent and handed over'}</div>
+            {mine.owed > 0 && <div style={{ fontSize: 12, color: 'var(--btb-gold)' }}>The club owes you {fmtKES(mine.owed)} for expenses you paid yourself.</div>}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function LedgerPage({ club, profile }) {
+  const isMgr = profile.role === 'manager'
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
-  const [modal, setModal] = useState(null)         // {entry?, dir?}
+  const [modal, setModal] = useState(null)         // {entry?, dir?} | {handover:true}
+  const [tab, setTab] = useState(isMgr ? 'overview' : 'entries')
   const [dirF, setDirF] = useState('all')
   const [catF, setCatF] = useState('all')
+  const [personF, setPersonF] = useState('all')
   const [month, setMonth] = useState(todayNairobi().slice(0, 7))   // '' = all time
   const [q, setQ] = useState('')
   const [showVoid, setShowVoid] = useState(false)
@@ -2701,94 +2805,180 @@ function LedgerPage({ club, profile }) {
   const [limit, setLimit] = useState(60)
 
   const load = useCallback(async () => {
-    const { data, error } = await supabase.from('ledger_entries').select('*, player:players(full_name), fixture:fixtures(opponent,age_group,match_date)').eq('club_id', club.id).order('entry_date', { ascending: false }).order('created_at', { ascending: false }).limit(2000)
+    const { data, error } = await supabase.from('ledger_entries').select(LEDGER_SELECT).eq('club_id', club.id).order('entry_date', { ascending: false }).order('created_at', { ascending: false }).limit(2000)
     if (error) setMsg({ kind: 'error', text: friendly(error.message) })
     setRows(data || []); setLoading(false)
   }, [club.id])
   useEffect(() => { load() }, [load])
 
+  const pos = cashPositions(rows)
+  const mine = pos[profile.id] || { held: 0, cashIn: 0, spent: 0, handed: 0, pending: 0, owed: 0 }
+  const people = Object.values(pos).sort((a, b) => b.held - a.held)
   const inPeriod = rows.filter(r => !month || r.entry_date.startsWith(month))
-  const live = inPeriod.filter(r => !r.voided)
+  const scope = inPeriod.filter(r => !r.voided && (personF === 'all' || r.created_by === personF))
   const sum = (arr, d) => arr.filter(r => r.direction === d).reduce((a, r) => a + r.amount, 0)
-  const collected = sum(live, 'in'), paid = sum(live, 'out')
-  const byCat = Object.entries(LEDGER_CATS).map(([k, l]) => ({ k, l, i: sum(live.filter(r => r.category === k), 'in'), o: sum(live.filter(r => r.category === k), 'out') })).filter(c => c.i || c.o)
-  const shown = inPeriod.filter(r => (showVoid || !r.voided) && (dirF === 'all' || r.direction === dirF) && (catF === 'all' || r.category === catF)
-    && (!q.trim() || [r.counterparty, r.reference, r.notes, r.player?.full_name, r.fixture?.opponent, LEDGER_CATS[r.category]].some(x => (x || '').toLowerCase().includes(q.trim().toLowerCase()))))
+  const collected = sum(scope, 'in'), spent = sum(scope, 'out'), handed = sum(scope, 'handover')
+  const byCat = Object.entries(LEDGER_CATS).map(([k, l]) => ({ k, l, i: sum(scope.filter(r => r.category === k), 'in'), o: sum(scope.filter(r => r.category === k), 'out') })).filter(c => c.i || c.o)
+  const shown = inPeriod.filter(r => (showVoid || !r.voided) && (personF === 'all' || r.created_by === personF) && (dirF === 'all' || r.direction === dirF) && (catF === 'all' || (r.direction !== 'handover' && r.category === catF))
+    && (!q.trim() || [r.counterparty, r.reference, r.notes, r.player?.full_name, r.fixture?.opponent, r.creator?.full_name, LEDGER_CATS[r.category]].some(x => (x || '').toLowerCase().includes(q.trim().toLowerCase()))))
   const monthLabel = month ? new Date(month + '-01T12:00:00+03:00').toLocaleDateString('en-KE', { month: 'long', year: 'numeric', timeZone: 'Africa/Nairobi' }) : 'All time'
+  const pendingRows = rows.filter(r => r.direction === 'handover' && r.handover_status === 'reported' && !r.voided)
+  const owedRows = rows.filter(r => r.direction === 'out' && r.source === 'personal' && !r.reimbursed && !r.voided)
 
-  const voidEntry = async (r) => {
-    const reason = prompt(`Void this ${r.direction === 'in' ? 'collection' : 'payment'} of ${fmtKES(r.amount)}? It will stop counting in the totals. Why? (e.g. entered twice)`)
-    if (reason === null) return
-    const { error } = await supabase.from('ledger_entries').update({ voided: true, void_reason: reason.trim().slice(0, 300) || 'Voided' }).eq('id', r.id)
-    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setMsg({ kind: 'ok', text: 'Entry voided' }); load() }
+  const canEdit = (r) => !r.voided && r.handover_status !== 'confirmed' && (isMgr || (r.created_by === profile.id && Date.now() - new Date(r.created_at).getTime() < 24 * 3600e3))
+  const update = async (id, patch, ok) => {
+    const { error } = await supabase.from('ledger_entries').update(patch).eq('id', id)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { if (ok) setMsg({ kind: 'ok', text: ok }); load() }
   }
-  const unvoid = async (r) => {
-    const { error } = await supabase.from('ledger_entries').update({ voided: false, void_reason: null }).eq('id', r.id)
-    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else load()
+  const voidEntry = (r) => {
+    const reason = prompt(`Void this ${r.direction === 'in' ? 'collection' : r.direction === 'out' ? 'expense' : 'hand-over'} of ${fmtKES(r.amount)}? It stops counting in the totals. Why? (e.g. entered twice)`)
+    if (reason !== null) update(r.id, { voided: true, void_reason: reason.trim().slice(0, 300) || 'Voided' }, 'Entry voided')
   }
-  const exportCsv = () => downloadCsv(`collections-payments-${month || 'all'}.csv`, [['Date', 'Type', 'Category', 'Amount', 'Person / business', 'Method', 'Reference', 'Match', 'Player', 'Notes', 'Voided'], ...inPeriod.slice().reverse().map(r => [r.entry_date, r.direction === 'in' ? 'Collected' : 'Paid out', LEDGER_CATS[r.category], r.amount, r.counterparty, r.method, r.reference, r.fixture ? `${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}` : '', r.player?.full_name, r.notes, r.voided ? 'Yes' : ''])])
+  const confirmAll = (list) => { if (confirm(`Confirm you received ${list.length} hand-over${list.length === 1 ? '' : 's'} totalling ${fmtKES(list.reduce((a, r) => a + r.amount, 0))}?`)) Promise.all(list.map(r => supabase.from('ledger_entries').update({ handover_status: 'confirmed' }).eq('id', r.id))).then(() => { setMsg({ kind: 'ok', text: 'Hand-overs confirmed' }); load() }) }
+  const exportCsv = () => downloadCsv(`collections-${month || 'all'}.csv`, [['Date', 'Type', 'Recorded by', 'Category', 'Amount', 'Person / business', 'Method / source', 'Reference', 'Hand-over to', 'Hand-over status', 'Reimbursed', 'Match', 'Child', 'Notes', 'Voided'],
+    ...inPeriod.slice().reverse().map(r => [r.entry_date, r.direction === 'in' ? 'Collected' : r.direction === 'out' ? 'Spent' : 'Handed over', r.creator?.full_name, r.direction === 'handover' ? '' : LEDGER_CATS[r.category], r.amount, r.counterparty, r.direction === 'out' ? SOURCES.find(s => s[0] === r.source)?.[1] : METHOD_LABEL[r.method], r.reference, r.dest === 'till' ? 'Till' : r.dest === 'manager' ? 'Manager' : '', r.handover_status, r.source === 'personal' ? (r.reimbursed ? 'Yes' : 'No') : '', r.fixture ? `${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}` : '', r.player?.full_name, r.notes, r.voided ? 'Yes' : ''])])
 
   if (loading) return <PageSkeleton />
   return (
     <div className="page">
       <div className="page-hdr">
-        <div><div className="page-title">Collections & payments</div><div className="page-sub">Money in and out that is keyed in by hand: transport, tournaments, kits and more</div></div>
+        <div><div className="page-title">Collections & expenses</div><div className="page-sub">Money collected, money spent, and the cash each person is holding</div></div>
         <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button className="btn btn-primary" onClick={() => setModal({ dir: 'in' })}>+ Collection</button>
-          <button className="btn btn-ghost" onClick={() => setModal({ dir: 'out' })}>+ Payment</button>
+          <button className="btn btn-ghost" onClick={() => setModal({ dir: 'out' })}>+ Expense</button>
+          <button className="btn btn-ghost" onClick={() => setModal({ handover: true })}>Hand over cash</button>
           <button className="btn btn-ghost" onClick={exportCsv}>Export CSV</button>
         </div>
       </div>
       {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
-        <input type="month" value={month} onChange={e => { setMonth(e.target.value); setLimit(60) }} style={{ width: 'auto' }} />
-        {month && <button className="btn btn-ghost btn-sm" onClick={() => setMonth('')}>All time</button>}
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{monthLabel}</span>
-      </div>
+
       <div className="tiles">
-        <div className="tile"><div className="tile-lbl">Collected</div><div className="tile-val" style={{ color: '#22c55e' }}>{fmtKES(collected)}</div></div>
-        <div className="tile"><div className="tile-lbl">Paid out</div><div className="tile-val" style={{ color: '#ef4444' }}>{fmtKES(paid)}</div></div>
-        <div className="tile"><div className="tile-lbl">Balance for the period</div><div className="tile-val">{collected - paid < 0 ? '−' : ''}{fmtKES(Math.abs(collected - paid))}</div></div>
+        <div className="tile hot"><div className="tile-lbl">Cash I am holding</div><div className="tile-val">{fmtKES(Math.max(mine.held, 0))}</div>{mine.held < 0 && <div className="tile-lbl" style={{ color: '#ef4444' }}>Negative: a collection may be missing</div>}</div>
+        {mine.pending > 0 && <div className="tile"><div className="tile-lbl">Handed over, awaiting confirmation</div><div className="tile-val">{fmtKES(mine.pending)}</div></div>}
+        {mine.owed > 0 && <div className="tile"><div className="tile-lbl">Club owes me (my own money)</div><div className="tile-val">{fmtKES(mine.owed)}</div></div>}
       </div>
-      {byCat.length > 0 && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-hdr"><div className="card-title">By category</div></div>
-          <div className="card-body">
-            {byCat.map(c => (
-              <div key={c.k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13, flexWrap: 'wrap' }}>
-                <span style={{ fontWeight: 600 }}>{c.l}</span>
-                <span><span style={{ color: '#22c55e' }}>+{fmtKES(c.i)}</span> &nbsp; <span style={{ color: '#ef4444' }}>−{fmtKES(c.o)}</span> &nbsp; <span style={{ color: 'var(--text-muted)' }}>net {c.i - c.o < 0 ? '−' : ''}{fmtKES(Math.abs(c.i - c.o))}</span></span>
-              </div>
-            ))}
+
+      {isMgr && <div className="filter-pills" style={{ marginBottom: 14 }}>
+        <button className={`pill ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview{pendingRows.length ? ` (${pendingRows.length} to confirm)` : ''}</button>
+        <button className={`pill ${tab === 'entries' ? 'active' : ''}`} onClick={() => setTab('entries')}>All entries</button>
+      </div>}
+
+      {isMgr && tab === 'overview' && (
+        <>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div className="card-hdr"><div className="card-title">Cash held by each person</div></div>
+            <div className="card-body">
+              {people.length === 0 ? <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Nothing recorded yet.</div> : people.map(p => (
+                <div key={p.id} className="rc" style={{ marginBottom: 8 }}>
+                  <div className="rc-main"><div className="rc-title">{p.name}</div><div className="rc-sub">Collected {fmtKES(p.cashIn)} · Spent {fmtKES(p.spent)} · Handed over {fmtKES(p.handed)}{p.pending ? ` (${fmtKES(p.pending)} to confirm)` : ''}{p.owed ? ` · Owed to them ${fmtKES(p.owed)}` : ''}</div></div>
+                  <div className="rc-side"><div style={{ fontWeight: 700, fontSize: 16, color: p.held < 0 ? '#ef4444' : undefined }}>{p.held < 0 ? '−' : ''}{fmtKES(Math.abs(p.held))}</div><div style={{ fontSize: 11, color: 'var(--text-muted)' }}>holding</div></div>
+                  <div className="rc-actions"><button className="btn btn-ghost btn-sm" onClick={() => { setPersonF(p.id); setMonth(''); setTab('entries') }}>Transactions</button></div>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Holding = cash and M-Pesa collected on their phone, minus what they spent from it and handed over. All time, not just this month.</div>
+            </div>
           </div>
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
-        <div className="filter-pills" style={{ margin: 0 }}>{[['all', 'All'], ['in', 'Collected'], ['out', 'Paid out']].map(([k, l]) => <button key={k} className={`pill ${dirF === k ? 'active' : ''}`} onClick={() => setDirF(k)}>{l}</button>)}</div>
-        <select value={catF} onChange={e => setCatF(e.target.value)} style={{ width: 'auto' }}><option value="all">All categories</option>{Object.entries(LEDGER_CATS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-        <input placeholder="Search" value={q} onChange={e => setQ(e.target.value)} style={{ flex: '1 1 160px', maxWidth: 260 }} />
-        <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={showVoid} onChange={e => setShowVoid(e.target.checked)} /> Show voided</label>
-      </div>
-      {shown.length === 0
-        ? <EmptyState icon="wallet" title="Nothing recorded" sub={rows.length ? 'No entries match these filters.' : 'Record your first collection or payment, for example the transport money for an away match.'} />
-        : <div className="rc-list">
-          {shown.slice(0, limit).map(r => (
-            <div key={r.id} className="rc" style={r.voided ? { opacity: 0.55 } : undefined}>
-              <div className="rc-time"><b>{fmtDate(r.entry_date + 'T12:00:00+03:00')}</b><span>{r.direction === 'in' ? 'collected' : 'paid out'}</span></div>
-              <div className="rc-main">
-                <div className="rc-title">{LEDGER_CATS[r.category]}{r.counterparty ? ` · ${r.counterparty}` : ''} {r.voided && <span className="badge badge-red">voided</span>}</div>
-                <div className="rc-sub">{[METHODS.find(m => m[0] === r.method)?.[1], r.reference, r.fixture && `${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}`, r.player?.full_name, r.notes].filter(Boolean).join(' · ')}{r.voided && r.void_reason ? ` · Void reason: ${r.void_reason}` : ''}</div>
-              </div>
-              <div className="rc-side"><div style={{ fontWeight: 700, fontSize: 16, color: r.direction === 'in' ? '#22c55e' : '#ef4444' }}>{r.direction === 'in' ? '+' : '−'}{fmtKES(r.amount)}</div></div>
-              <div className="rc-actions">
-                {!r.voided && <button className="btn btn-ghost btn-sm" onClick={() => setModal({ entry: r })}>Edit</button>}
-                {r.voided ? <button className="btn btn-ghost btn-sm" onClick={() => unvoid(r)}>Restore</button> : <button className="btn btn-ghost btn-sm" onClick={() => voidEntry(r)}>Void</button>}
+          {pendingRows.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-hdr"><div className="card-title">Hand-overs waiting for you to confirm</div><button className="btn btn-primary btn-sm" onClick={() => confirmAll(pendingRows)}>Confirm all</button></div>
+              <div className="card-body">
+                {pendingRows.map(r => (
+                  <div key={r.id} className="rc" style={{ marginBottom: 8 }}>
+                    <div className="rc-time"><b>{fmtDate(r.entry_date + 'T12:00:00+03:00')}</b></div>
+                    <div className="rc-main"><div className="rc-title">{r.creator?.full_name} · {r.dest === 'till' ? 'deposited to the till' : 'sent to you'}</div><div className="rc-sub">{[METHOD_LABEL[r.method], r.reference, r.notes].filter(Boolean).join(' · ')}</div></div>
+                    <div className="rc-side"><b>{fmtKES(r.amount)}</b></div>
+                    <div className="rc-actions"><button className="btn btn-primary btn-sm" onClick={() => update(r.id, { handover_status: 'confirmed' }, 'Hand-over confirmed')}>Confirm</button></div>
+                  </div>
+                ))}
               </div>
             </div>
-          ))}
-          {shown.length > limit && <button className="btn btn-ghost" style={{ gridColumn: '1 / -1' }} onClick={() => setLimit(l => l + 60)}>Show more ({shown.length - limit} left)</button>}
-        </div>}
-      {modal && <LedgerModal club={club} profile={profile} entry={modal.entry} startDir={modal.dir} onClose={() => setModal(null)} onSaved={() => { setModal(null); setMsg({ kind: 'ok', text: 'Saved' }); load() }} />}
+          )}
+          {owedRows.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-hdr"><div className="card-title">Expenses staff paid from their own money</div></div>
+              <div className="card-body">
+                {owedRows.map(r => (
+                  <div key={r.id} className="rc" style={{ marginBottom: 8 }}>
+                    <div className="rc-time"><b>{fmtDate(r.entry_date + 'T12:00:00+03:00')}</b></div>
+                    <div className="rc-main"><div className="rc-title">{r.creator?.full_name} · {LEDGER_CATS[r.category]}{r.counterparty ? ` · ${r.counterparty}` : ''}</div><div className="rc-sub">{[r.reference, r.notes].filter(Boolean).join(' · ')}</div></div>
+                    <div className="rc-side"><b>{fmtKES(r.amount)}</b></div>
+                    <div className="rc-actions"><button className="btn btn-ghost btn-sm" onClick={() => update(r.id, { reimbursed: true }, 'Marked as reimbursed')}>Mark reimbursed</button></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {(!isMgr || tab === 'entries') && (
+        <>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+            <input type="month" value={month} onChange={e => { setMonth(e.target.value); setLimit(60) }} style={{ width: 'auto' }} />
+            {month && <button className="btn btn-ghost btn-sm" onClick={() => setMonth('')}>All time</button>}
+            <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{monthLabel}{personF !== 'all' ? ` · ${pos[personF]?.name || ''}` : ''}</span>
+            {personF !== 'all' && <button className="btn btn-ghost btn-sm" onClick={() => setPersonF('all')}>Show everyone</button>}
+          </div>
+          <div className="tiles">
+            <div className="tile"><div className="tile-lbl">Collected</div><div className="tile-val" style={{ color: '#22c55e' }}>{fmtKES(collected)}</div></div>
+            <div className="tile"><div className="tile-lbl">Spent</div><div className="tile-val" style={{ color: '#ef4444' }}>{fmtKES(spent)}</div></div>
+            <div className="tile"><div className="tile-lbl">Handed over</div><div className="tile-val">{fmtKES(handed)}</div></div>
+          </div>
+          {byCat.length > 0 && (
+            <div className="card" style={{ marginBottom: 16 }}>
+              <div className="card-hdr"><div className="card-title">By category</div></div>
+              <div className="card-body">
+                {byCat.map(c => (
+                  <div key={c.k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13, flexWrap: 'wrap' }}>
+                    <span style={{ fontWeight: 600 }}>{c.l}</span>
+                    <span><span style={{ color: '#22c55e' }}>+{fmtKES(c.i)}</span> &nbsp; <span style={{ color: '#ef4444' }}>−{fmtKES(c.o)}</span> &nbsp; <span style={{ color: 'var(--text-muted)' }}>net {c.i - c.o < 0 ? '−' : ''}{fmtKES(Math.abs(c.i - c.o))}</span></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+            <div className="filter-pills" style={{ margin: 0 }}>{[['all', 'All'], ['in', 'Collected'], ['out', 'Spent'], ['handover', 'Hand-overs']].map(([k, l]) => <button key={k} className={`pill ${dirF === k ? 'active' : ''}`} onClick={() => setDirF(k)}>{l}</button>)}</div>
+            <select value={catF} onChange={e => setCatF(e.target.value)} style={{ width: 'auto' }}><option value="all">All categories</option>{Object.entries(LEDGER_CATS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+            {isMgr && <select value={personF} onChange={e => setPersonF(e.target.value)} style={{ width: 'auto' }}><option value="all">Everyone</option>{people.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select>}
+            <input placeholder="Search" value={q} onChange={e => setQ(e.target.value)} style={{ flex: '1 1 160px', maxWidth: 260 }} />
+            <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={showVoid} onChange={e => setShowVoid(e.target.checked)} /> Show voided</label>
+          </div>
+          {shown.length === 0
+            ? <EmptyState icon="wallet" title="Nothing recorded" sub={rows.length ? 'No entries match these filters.' : 'Record your first collection, for example transport or lunch money.'} />
+            : <div className="rc-list">
+              {shown.slice(0, limit).map(r => {
+                const ho = r.direction === 'handover'
+                return (
+                  <div key={r.id} className="rc" style={r.voided ? { opacity: 0.55 } : undefined}>
+                    <div className="rc-time"><b>{fmtDate(r.entry_date + 'T12:00:00+03:00')}</b><span>{r.direction === 'in' ? 'collected' : r.direction === 'out' ? 'spent' : 'hand-over'}</span></div>
+                    <div className="rc-main">
+                      <div className="rc-title">
+                        {ho ? (r.dest === 'till' ? 'Deposited to the till' : 'Sent to the manager') : LEDGER_CATS[r.category]}{!ho && r.counterparty ? ` · ${r.counterparty}` : ''}{' '}
+                        {r.voided && <span className="badge badge-red">voided</span>}
+                        {ho && !r.voided && <span className={`badge ${r.handover_status === 'confirmed' ? 'badge-green' : 'badge-amber'}`}>{r.handover_status === 'confirmed' ? 'confirmed' : 'awaiting confirmation'}</span>}
+                        {r.direction === 'out' && r.source === 'personal' && !r.voided && <span className={`badge ${r.reimbursed ? 'badge-green' : 'badge-amber'}`}>{r.reimbursed ? 'reimbursed' : 'own money'}</span>}
+                      </div>
+                      <div className="rc-sub">{[isMgr && r.creator?.full_name, r.direction === 'out' ? SOURCES.find(s => s[0] === r.source)?.[1] : METHOD_LABEL[r.method], r.reference, r.fixture && `${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}`, r.player?.full_name, r.notes].filter(Boolean).join(' · ')}{r.voided && r.void_reason ? ` · Void reason: ${r.void_reason}` : ''}</div>
+                    </div>
+                    <div className="rc-side"><div style={{ fontWeight: 700, fontSize: 16, color: r.direction === 'in' ? '#22c55e' : r.direction === 'out' ? '#ef4444' : undefined }}>{r.direction === 'in' ? '+' : r.direction === 'out' ? '−' : '→ '}{fmtKES(r.amount)}</div></div>
+                    <div className="rc-actions">
+                      {isMgr && ho && r.handover_status === 'reported' && !r.voided && <button className="btn btn-primary btn-sm" onClick={() => update(r.id, { handover_status: 'confirmed' }, 'Hand-over confirmed')}>Confirm</button>}
+                      {isMgr && r.direction === 'out' && r.source === 'personal' && !r.reimbursed && !r.voided && <button className="btn btn-ghost btn-sm" onClick={() => update(r.id, { reimbursed: true }, 'Marked as reimbursed')}>Reimbursed</button>}
+                      {!ho && canEdit(r) && <button className="btn btn-ghost btn-sm" onClick={() => setModal({ entry: r })}>Edit</button>}
+                      {r.voided ? (isMgr && <button className="btn btn-ghost btn-sm" onClick={() => update(r.id, { voided: false, void_reason: null })}>Restore</button>) : canEdit(r) && <button className="btn btn-ghost btn-sm" onClick={() => voidEntry(r)}>Void</button>}
+                    </div>
+                  </div>
+                )
+              })}
+              {shown.length > limit && <button className="btn btn-ghost" style={{ gridColumn: '1 / -1' }} onClick={() => setLimit(l => l + 60)}>Show more ({shown.length - limit} left)</button>}
+            </div>}
+          {!isMgr && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 10 }}>You can edit or void your own entries for 24 hours. After that, ask the manager.</div>}
+        </>
+      )}
+      {modal?.handover
+        ? <HandoverModal club={club} profile={profile} holding={mine.held} onClose={() => setModal(null)} onSaved={() => { setModal(null); setMsg({ kind: 'ok', text: 'Hand-over recorded. The manager will confirm it.' }); load() }} />
+        : modal && <LedgerModal club={club} profile={profile} entry={modal.entry} startDir={modal.dir} onClose={() => setModal(null)} onSaved={() => { setModal(null); setMsg({ kind: 'ok', text: 'Saved' }); load() }} />}
     </div>
   )
 }
@@ -4086,6 +4276,7 @@ function App() {
       { id: 'match-centre', label: 'Match Centre', icon: <Icon name="ball" /> },
       { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
       { id: 'absences', label: 'Absences', icon: <Icon name="userx" /> },
+      { id: 'ledger', label: 'Collections', icon: <Icon name="coins" /> },
       { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
     ],
     player: [
@@ -4117,7 +4308,7 @@ function App() {
       case 'training': return <TrainingPage userRole={profile.role} club={club} profile={profile} />
       case 'absences': return profile.role === 'parent' ? null : <AbsencesPage club={club} profile={profile} />
       case 'fees': return profile.role === 'manager' ? <FeesPage club={club} /> : null
-      case 'ledger': return profile.role === 'manager' ? <LedgerPage club={club} profile={profile} /> : null
+      case 'ledger': return (profile.role === 'manager' || profile.role === 'coach') ? <LedgerPage club={club} profile={profile} /> : null
       case 'messages': return <MessagesPage profile={profile} clubId={club.id} />
       case 'analytics': return <AnalyticsPage clubId={club.id} />
       default: return profile.role === 'parent' ? <ParentDashboard profile={profile} club={club} setPage={setPage} /> : <ManagerDashboard profile={profile} club={club} setPage={setPage} />
