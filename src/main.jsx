@@ -103,8 +103,24 @@ if (typeof document !== 'undefined' && !document.getElementById('sp-mobile-fix')
     .sidebar-nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
     .sidebar-footer { flex: 0 0 auto; }
     .main-content { margin-left: 0 !important; flex: 1 1 auto; min-width: 0; }
-    .content-area { max-width: 1240px; margin-left: auto; margin-right: auto; }
+    .content-area { width: 100%; max-width: 1560px; margin-left: auto; margin-right: auto; }
+    .page { padding: 28px clamp(24px, 3vw, 48px) 48px !important; }
+    .modal { width: min(640px, 92vw) !important; max-width: none !important; }
+    .modal.modal-lg { width: min(980px, 94vw) !important; }
+    .modal-body { max-height: calc(100vh - 220px); overflow-y: auto; }
+    .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 14px 18px !important; }
+    .stat-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)) !important; gap: 14px !important; }
+    .tiles { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
   }
+  @media (min-width: 901px) and (max-width: 1180px) { .sidebar { flex-basis: 224px; width: 224px; } }
+  @media (min-width: 1500px) { .rc-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; } .rc-list .day-hdr { grid-column: 1 / -1; } }
+  .att-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border, rgba(255,255,255,0.09)); border-radius: 12px; margin-bottom: 8px; cursor: pointer; background: var(--bg-card, #111830); user-select: none; }
+  .att-row.on { border-color: #22c55e; background: rgba(34,197,94,0.10); }
+  .att-row.off { border-color: rgba(239,68,68,0.55); background: rgba(239,68,68,0.07); }
+  .att-box { width: 28px; height: 28px; border-radius: 8px; border: 2px solid var(--text-dim, #8591ad); display: inline-flex; align-items: center; justify-content: center; flex: 0 0 28px; font-weight: 800; color: #000; }
+  .att-row.on .att-box { background: #22c55e; border-color: #22c55e; }
+  .att-grid { display: grid; grid-template-columns: 1fr; column-gap: 12px; }
+  @media (min-width: 760px) { .att-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   body, button, input, select, textarea, td, th { letter-spacing: normal; font-kerning: normal; }
   .avatar { overflow: hidden; flex-shrink: 0; }
   .avatar img { max-width: 100%; max-height: 100%; object-fit: cover; }
@@ -1387,6 +1403,10 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [allCentres, setAllCentres] = useState(false)
+  const [view, setView] = useState('list')
+  const [q, setQ] = useState('')
+  const [ageF, setAgeF] = useState('all')
+  const [absFor, setAbsFor] = useState(null)   // player id whose absence reason is being entered
   const day = nairobiDate(session.session_date)
 
   useEffect(() => {
@@ -1401,48 +1421,92 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
       ])
       const attMap = Object.fromEntries((att || []).map(a => [a.player_id, a]))
       const absMap = Object.fromEntries((abs || []).map(a => [a.player_id, a]))
-      setRows((pl || []).map(p => ({ ...p, status: attMap[p.id]?.status || (absMap[p.id] ? 'excused' : null), saved: !!attMap[p.id], reported: absMap[p.id] || null })))
+      setRows((pl || []).map(p => ({ ...p, status: attMap[p.id]?.status || (absMap[p.id] ? 'excused' : null), saved: !!attMap[p.id], reported: absMap[p.id] || null, coachReason: null })))
       setLoading(false)
     }
     load()
   }, [club.id, session.id, session.training_center_id, allCentres, day])
 
   const setStatus = (id, status) => setRows(r => r.map(p => p.id === id ? { ...p, status: p.status === status ? null : status } : p))
+  const toggle = (id) => setRows(r => r.map(p => p.id === id ? { ...p, status: (p.status === 'present' || p.status === 'late') ? null : 'present', coachReason: null } : p))
   const markRemaining = (status) => setRows(r => r.map(p => p.status ? p : { ...p, status }))
+  const setAll = (status) => setRows(r => r.map(p => visible.some(v => v.id === p.id) ? { ...p, status } : p))
   const counts = Object.fromEntries(ATT_STATUS.map(([k]) => [k, rows.filter(p => p.status === k).length]))
   const unmarked = rows.filter(p => !p.status).length
+  const here = rows.filter(p => p.status === 'present' || p.status === 'late').length
+  const ages = [...new Set(rows.map(ageGroupOf))].filter(Boolean).sort((a, b) => AGE_GROUPS.indexOf(a) - AGE_GROUPS.indexOf(b))
+  const visible = rows.filter(p => (ageF === 'all' || ageGroupOf(p) === ageF) && (!q.trim() || p.full_name.toLowerCase().includes(q.trim().toLowerCase())))
 
   const save = async () => {
-    const payload = rows.filter(p => p.status).map(p => ({ session_id: session.id, player_id: p.id, club_id: club.id, status: p.status, marked_by: profile.id, updated_at: new Date().toISOString() }))
+    // In the tick-list, anyone left unticked is recorded as absent
+    const final = rows.map(p => (view === 'list' && !p.status) ? { ...p, status: 'absent' } : p)
+    const payload = final.filter(p => p.status).map(p => ({ session_id: session.id, player_id: p.id, club_id: club.id, status: p.status, marked_by: profile.id, updated_at: new Date().toISOString() }))
     if (payload.length === 0) { setError('Mark at least one player'); return }
     setSaving(true); setError('')
     const { error: err } = await supabase.from('training_attendance').upsert(payload, { onConflict: 'session_id,player_id' })
-    setSaving(false)
     if (err && isNetworkError(err.message)) {
-      try { const q = JSON.parse(localStorage.getItem('sp-att-queue') || '[]'); q.push(payload); localStorage.setItem('sp-att-queue', JSON.stringify(q)) } catch {}
+      setSaving(false)
+      try { const qd = JSON.parse(localStorage.getItem('sp-att-queue') || '[]'); qd.push(payload); localStorage.setItem('sp-att-queue', JSON.stringify(qd)) } catch {}
       onSaved('No signal. Attendance is saved on this phone and will send by itself when you are back online.')
       return
     }
-    if (err) { setError(friendly(err.message)); return }
-    onSaved()
+    if (err) { setSaving(false); setError(friendly(err.message)); return }
+    // Absences with a reason entered by the coach are also logged in Absences
+    const reasons = final.filter(p => p.coachReason && p.status === 'absent').map(p => ({ club_id: club.id, player_id: p.id, reported_by: profile.id, date_from: day, date_to: day, reason_type: p.coachReason.type, reason: p.coachReason.note.trim() || null }))
+    let warn = null
+    if (reasons.length) { const { error: e2 } = await supabase.from('absence_reports').insert(reasons); if (e2) warn = 'Attendance saved, but the absence reasons could not be logged: ' + friendly(e2.message) }
+    setSaving(false)
+    onSaved(warn || undefined)
   }
+
+  const confirmReason = (id, type, note) => { setRows(r => r.map(p => p.id === id ? { ...p, status: 'absent', coachReason: { type, note } } : p)); setAbsFor(null) }
+  const absentWillBe = view === 'list' ? unmarked + counts.absent : counts.absent
 
   return (
     <Modal title={`Attendance · ${session.title.replace('Training · ', '')}`} onClose={onClose} size="modal-lg">
       <div className="modal-body">
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>{fmtDateTime(session.session_date)} · {session.venue || 'Venue not set'}</div>
         {error && <Note kind="error" style={{ marginBottom: 10 }}>{error}</Note>}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
-          <button className="btn btn-primary btn-sm" onClick={() => markRemaining('present')}>Everyone else present</button><span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Tap a name to switch present / absent</span>
-          <button className="btn btn-ghost btn-sm" onClick={() => markRemaining('absent')}>All remaining absent</button>
-          {session.training_center_id && <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={allCentres} onChange={e => setAllCentres(e.target.checked)} /> Show other centres too</label>}
+        <div className="filter-pills" style={{ marginBottom: 12 }}>
+          <button className={`pill ${view === 'list' ? 'active' : ''}`} onClick={() => setView('list')}>Tick list</button>
+          <button className={`pill ${view === 'detail' ? 'active' : ''}`} onClick={() => setView('detail')}>Detailed (late / excused)</button>
         </div>
-        <div style={{ fontSize: 12, marginBottom: 10 }}>{ATT_STATUS.map(([k, l]) => `${counts[k]} ${l.toLowerCase()}`).join(' · ')} · {unmarked} not marked</div>
-        {loading ? <Spinner /> : rows.length === 0 ? <div className="empty"><div className="empty-sub">No active players at this centre yet</div></div> : (
-          <div style={{ maxHeight: 420, overflowY: 'auto' }}>
-            {rows.map(p => (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
+          <input placeholder="Search name" value={q} onChange={e => setQ(e.target.value)} style={{ flex: '1 1 160px', minWidth: 140, maxWidth: 260 }} />
+          {ages.length > 1 && <select value={ageF} onChange={e => setAgeF(e.target.value)} style={{ width: 'auto' }}><option value="all">All ages</option>{ages.map(a => <option key={a}>{a}</option>)}</select>}
+          <button className="btn btn-primary btn-sm" onClick={() => setAll('present')}>Tick all shown</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setRows(r => r.map(p => visible.some(v => v.id === p.id) && p.status === 'present' ? { ...p, status: null } : p))}>Clear ticks</button>
+          {session.training_center_id && <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={allCentres} onChange={e => setAllCentres(e.target.checked)} /> Other centres too</label>}
+        </div>
+        <div style={{ fontSize: 13, marginBottom: 12, fontWeight: 600 }}>
+          <span style={{ color: '#22c55e' }}>{here} present</span> · <span style={{ color: '#ef4444' }}>{absentWillBe} absent</span>{counts.excused ? ` · ${counts.excused} excused` : ''}{view === 'detail' && unmarked ? ` · ${unmarked} not marked` : ''}
+        </div>
+        {loading ? <Spinner /> : rows.length === 0 ? <div className="empty"><div className="empty-sub">No active players at this centre yet</div></div> : visible.length === 0 ? <div className="empty"><div className="empty-sub">No players match</div></div> : view === 'list' ? (
+          <div className="att-grid">
+            {visible.map(p => {
+              const on = p.status === 'present' || p.status === 'late'
+              const off = p.status === 'absent' || p.status === 'excused'
+              return (
+                <div key={p.id}>
+                  <div className={`att-row ${on ? 'on' : off ? 'off' : ''}`} onClick={() => toggle(p.id)}>
+                    <span className="att-box">{on ? '✓' : ''}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>
+                      {p.status === 'excused' && p.reported && <div style={{ fontSize: 11, color: 'var(--btb-gold)' }}>Parent reported: {ABSENCE_REASONS.find(r => r[0] === p.reported.reason_type)?.[1]}{p.reported.reason ? ` · ${p.reported.reason}` : ''}</div>}
+                      {p.coachReason && <div style={{ fontSize: 11, color: 'var(--btb-gold)' }}>Absent: {ABSENCE_REASONS.find(r => r[0] === p.coachReason.type)?.[1]}{p.coachReason.note ? ` · ${p.coachReason.note}` : ''}</div>}
+                    </div>
+                    {!on && <button className="btn btn-ghost btn-sm" onClick={e => { e.stopPropagation(); setAbsFor(absFor === p.id ? null : p.id) }}>{p.coachReason || p.status === 'excused' ? 'Reason' : 'Absent…'}</button>}
+                  </div>
+                  {absFor === p.id && <AbsenceReasonBox onCancel={() => setAbsFor(null)} onOk={(t, n) => confirmReason(p.id, t, n)} />}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div>
+            {visible.map(p => (
               <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 4px', borderBottom: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 150, cursor: 'pointer', padding: '6px 0' }} onClick={() => setRows(r => r.map(x => x.id === p.id ? { ...x, status: x.status === 'present' ? 'absent' : 'present' } : x))}>
+                <div style={{ flex: 1, minWidth: 150, cursor: 'pointer', padding: '6px 0' }} onClick={() => toggle(p.id)}>
                   <div style={{ fontSize: 14, fontWeight: 600 }}>{p.full_name} <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{ageGroupOf(p)}</span></div>
                   {p.reported && <div style={{ fontSize: 11, color: 'var(--btb-gold)' }}>Parent reported absence: {ABSENCE_REASONS.find(r => r[0] === p.reported.reason_type)?.[1]}{p.reported.reason ? ` · ${p.reported.reason}` : ''}</div>}
                 </div>
@@ -1453,12 +1517,26 @@ function AttendanceModal({ club, profile, session, onClose, onSaved }) {
             ))}
           </div>
         )}
+        {view === 'list' && !loading && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>Tap a name to tick them present. Anyone not ticked is saved as absent. Use "Absent…" to record why.</div>}
       </div>
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : 'Save attendance'}</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : `Save attendance (${here} present)`}</button>
       </div>
     </Modal>
+  )
+}
+
+function AbsenceReasonBox({ onOk, onCancel }) {
+  const [t, setT] = useState('sick'); const [n, setN] = useState('')
+  return (
+    <div style={{ margin: '-4px 0 10px', padding: 12, border: '1px solid var(--border)', borderRadius: 12, background: 'var(--bg-card2, rgba(255,255,255,0.03))' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <select value={t} onChange={e => setT(e.target.value)} style={{ flex: '1 1 150px' }}>{ABSENCE_REASONS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        <input placeholder="Note (optional)" maxLength={300} value={n} onChange={e => setN(e.target.value)} style={{ flex: '2 1 180px' }} />
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}><button className="btn btn-primary btn-sm" onClick={() => onOk(t, n)}>Mark absent</button><button className="btn btn-ghost btn-sm" onClick={onCancel}>Cancel</button></div>
+    </div>
   )
 }
 
@@ -2160,7 +2238,7 @@ function TrainingPage({ club, userRole, profile }) {
           const groups = []
           shownSessions.forEach(x => { const k = nairobiDate(x.session_date); let g = groups[groups.length - 1]; if (!g || g.k !== k) { g = { k, items: [] }; groups.push(g) } g.items.push(x) })
           return groups.map(g => (
-            <div key={g.k}>
+            <div key={g.k} className="rc-list">
               <div className="day-hdr">{dayLabel(g.k)}</div>
               {g.items.map(x => {
                 const tm = nairobiTime(x.session_date)
@@ -2312,7 +2390,7 @@ function FeesPage({ club }) {
       </div>
       {shown.length === 0
         ? <EmptyState icon="wallet" title="Nothing here" sub={filter === 'open' ? 'No outstanding fees. Everyone is up to date.' : 'No fees match this view.'} />
-        : <div style={{ marginBottom: 16 }}>
+        : <div className="rc-list" style={{ marginBottom: 16 }}>
           {shown.slice(0, feeLimit).map(f => (
             <div key={f.id} className="rc">
               <div className="avatar avatar-sm">{initials(f.player?.full_name)}</div>
