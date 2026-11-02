@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import ReactDOM from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import './index.css'
@@ -433,7 +433,7 @@ function SquadPage({ club, userRole }) {
     const { data: cs } = await supabase.from('training_centers').select('id,name').eq('club_id', club.id)
     setCenters(cs || [])
     setLoading(false)
-  }, [club.id])
+  }, [club.id, isStaffF])
 
   useEffect(() => { load() }, [load])
 
@@ -833,15 +833,21 @@ function FixturesPage({ club, userRole, profile: profileF }) {
   const [squadFx, setSquadFx] = useState(null)
   const [editFx, setEditFx] = useState(null)
   const [resultFx, setResultFx] = useState(null)
+  const [reportFx, setReportFx] = useState(null)
+  const [awards, setAwards] = useState([])
+  const [reports, setReports] = useState({})
   const isStaffF = userRole === 'manager' || userRole === 'coach'
 
   const load = useCallback(async () => {
     const { data } = await supabase.from('fixtures').select('*').eq('club_id', club.id).order('match_date', { ascending: false })
     const { data: sq } = await supabase.from('match_squad').select('fixture_id,role,guest_name,player:players(full_name)').eq('club_id', club.id)
     setSquads(sq || [])
+    const { data: aw } = await supabase.from('match_awards').select('fixture_id,award,guest_name,reason,player:players(full_name)').eq('club_id', club.id)
+    setAwards(aw || [])
+    if (isStaffF) { const { data: rp } = await supabase.from('match_reports').select('fixture_id,pre_at,post_at').eq('club_id', club.id); setReports(Object.fromEntries((rp || []).map(r => [r.fixture_id, r]))) }
     setFixtures(data || [])
     setLoading(false)
-  }, [club.id])
+  }, [club.id, isStaffF])
 
   useEffect(() => { load() }, [load])
 
@@ -896,10 +902,13 @@ function FixturesPage({ club, userRole, profile: profileF }) {
                   </div>
                   {f.venue && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 6 }}>📍 {f.venue}</div>}
                   {!isStaffF && squads.filter(x => x.fixture_id === f.id).map((x, i) => <div key={i} style={{ fontSize: 12, marginTop: 6, color: x.role === 'unavailable' ? 'var(--red)' : 'var(--green)' }}>⚽ {x.player?.full_name?.split(' ')[0]}: {x.role === 'starter' ? 'in the starting team' : x.role === 'sub' ? 'on the bench' : 'not available'}</div>)}
+                  {awards.filter(a => a.fixture_id === f.id).length > 0 && <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>{AWARDS.map(([k, l, ico]) => { const a = awards.find(x => x.fixture_id === f.id && x.award === k); return a ? <span key={k} className="tag" style={{ color: 'var(--btb-gold, #e0b43c)' }} title={a.reason || ''}>{ico} {l}: {a.player?.full_name || a.guest_name}</span> : null })}</div>}
                   {f.status === 'completed' && f.match_report && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, whiteSpace: 'pre-wrap' }}>{f.match_report}</div>}
                   {isStaffF && <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                     <button className="btn btn-ghost btn-sm" onClick={() => setSquadFx(f)}>{f.status === 'completed' ? 'Squad & notes' : `Squad (${squads.filter(x => x.fixture_id === f.id && x.role !== 'unavailable').length})`}</button>
                     {f.status !== 'live' && <button className="btn btn-primary btn-sm" onClick={() => setResultFx(f)}>{f.status === 'completed' ? 'Edit result' : 'Enter result'}</button>}
+                    <button className="btn btn-ghost btn-sm" onClick={() => setReportFx({ f, tab: 'pre' })}>Pre-match{reports[f.id]?.pre_at ? ' ✓' : ''}</button>
+                    {(f.status === 'completed' || f.status === 'live') && <button className="btn btn-ghost btn-sm" onClick={() => setReportFx({ f, tab: 'post' })}>Post-match{reports[f.id]?.post_at ? ' ✓' : ''}</button>}
                     <button className="btn btn-ghost btn-sm" onClick={() => setEditFx(f)}>Edit match</button>
                   </div>}
                 </div>
@@ -908,9 +917,223 @@ function FixturesPage({ club, userRole, profile: profileF }) {
           </div>
         )}
       {editFx && <EditFixtureModal fixture={editFx} onClose={() => setEditFx(null)} onSaved={() => { setEditFx(null); load() }} />}
-      {resultFx && <MatchResultModal club={club} fixture={resultFx} onClose={() => setResultFx(null)} onSaved={() => { setResultFx(null); load() }} />}
+      {reportFx && <MatchReportsModal club={club} fixture={reportFx.f} profile={profileF} initialTab={reportFx.tab} onClose={() => setReportFx(null)} onSaved={load} />}
+      {resultFx && <MatchResultModal club={club} profile={profileF} fixture={resultFx} onClose={() => setResultFx(null)} onSaved={() => { setResultFx(null); load() }} />}
       {squadFx && <MatchSquadModal club={club} fixture={squadFx} profile={profileF} onClose={() => setSquadFx(null)} onSaved={() => { setSquadFx(null); load() }} />}
       {showAdd && <AddFixtureModal club={club} onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); load() }} />}
+    </div>
+  )
+}
+
+// ---------- Coaching: pre-match plan, post-match review, awards
+const PRE_PHASES = [
+  { key: 'buildup', title: 'Build-up', hint: 'How do we play out from the back and get into the game?', chips: ['Short from the keeper', 'Play through the middle', 'Use the full-backs', 'Go direct to the striker', 'Overload one side'] },
+  { key: 'possession', title: 'Possession & style', hint: 'How do we want the game to look when we have the ball?', chips: ['Patient possession', 'Quick one-touch passing', 'Play between the lines', 'Switch the play', 'Keep it simple'] },
+  { key: 'chances', title: 'Creating chances', hint: 'Where will our goals come from?', chips: ['Wide play & crosses', 'Through balls behind', 'Shots from distance', 'Runners from midfield', 'Cut-backs', 'Set pieces'] },
+  { key: 'press', title: 'Pressing & defending', hint: 'How do we win the ball back and protect our goal?', chips: ['High press', 'Mid block', 'Low block', 'Press the back pass', 'Man-to-man', 'Zonal'] },
+  { key: 'trans', title: 'Transitions', hint: 'What do we do in the first 5 seconds after losing or winning the ball?', chips: ['Counter-press at once', 'Drop back into shape', 'Fast counter-attack', 'Slow it down & keep it'] },
+  { key: 'setp', title: 'Set pieces', hint: 'Corners, free kicks, throw-ins', chips: ['Short corners', 'Near-post delivery', 'Zonal marking', 'Man marking', 'Quick throw-ins'] },
+]
+const VERDICTS = [['worked', 'Worked', '#22c55e'], ['partly', 'Partly', '#f59e0b'], ['didnt', 'Did not work', '#ef4444']]
+const AWARDS = [['motm', 'Man of the Match', '🏅'], ['effort', 'Hardest worker', '💪'], ['rising', 'Rising star', '⭐']]
+
+function ChipPick({ options, value = [], onChange }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      {options.map(o => { const on = value.includes(o); return (
+        <button key={o} type="button" onClick={() => onChange(on ? value.filter(x => x !== o) : [...value, o])} className="btn btn-sm" style={{ background: on ? 'var(--btb-gold, #e0b43c)' : 'transparent', color: on ? '#000' : 'var(--text-muted)', border: `1px solid ${on ? 'var(--btb-gold, #e0b43c)' : 'var(--border)'}` }}>{o}</button>
+      ) })}
+    </div>
+  )
+}
+
+function MatchReportsModal({ club, fixture, profile, initialTab = 'pre', onClose, onSaved }) {
+  const [tab, setTab] = useState(initialTab)
+  const [loading, setLoading] = useState(true)
+  const [pre, setPre] = useState({ phases: {} })
+  const [post, setPost] = useState({ phases: {}, adjustments: [] })
+  const [meta, setMeta] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState(null)
+
+  useEffect(() => {
+    supabase.from('match_reports').select('*').eq('fixture_id', fixture.id).maybeSingle().then(({ data }) => {
+      if (data) { setPre({ phases: {}, ...(data.pre || {}) }); setPost({ phases: {}, adjustments: [], ...(data.post || {}) }); setMeta(data) }
+      setLoading(false)
+    })
+  }, [fixture.id])
+
+  const setPh = (setter, key, patch) => setter(x => ({ ...x, phases: { ...x.phases, [key]: { ...(x.phases[key] || {}), ...patch } } }))
+  const title = `vs ${fixture.opponent}${fixture.age_group ? ' · ' + fixture.age_group : ''}`
+
+  const save = async () => {
+    setSaving(true); setMsg(null)
+    const now = new Date().toISOString()
+    const row = tab === 'pre' ? { pre, pre_by: profile.id, pre_at: now } : { post, post_by: profile.id, post_at: now }
+    const { error } = await supabase.from('match_reports').upsert({ fixture_id: fixture.id, club_id: club.id, ...row }, { onConflict: 'fixture_id' })
+    setSaving(false)
+    if (error) { setMsg({ kind: 'error', text: friendly(error.message) }); return }
+    setMeta(m => ({ ...m, ...row })); setMsg({ kind: 'ok', text: tab === 'pre' ? 'Pre-match plan saved' : 'Post-match review saved' }); onSaved && onSaved()
+  }
+
+  const preShare = () => {
+    const lines = [`⚽ ${club.short_name || 'BTB'} vs ${fixture.opponent}${fixture.age_group ? ' (' + fixture.age_group + ')' : ''}`, `${fmtDate(fixture.match_date)} ${fmtTime(fixture.match_date)}${fixture.venue ? ' · ' + fixture.venue : ''}`]
+    if (pre.headline) lines.push('', `Game plan: ${pre.headline}`)
+    PRE_PHASES.forEach(p => { const v = pre.phases[p.key]; if (v && ((v.chips || []).length || v.note)) lines.push(`• ${p.title}: ${[...(v.chips || []), v.note].filter(Boolean).join(' - ')}`) })
+    if (pre.messages) lines.push('', 'Key messages:', pre.messages)
+    return lines.join('\n')
+  }
+
+  const ta = (obj, setter, key, label, rows = 3, ph = '') => <FormField label={label}><textarea rows={rows} maxLength={2000} value={obj[key] || ''} onChange={e => setter(x => ({ ...x, [key]: e.target.value }))} placeholder={ph} /></FormField>
+
+  return (
+    <Modal title={`Coaching · ${title}`} onClose={onClose} size="modal-lg">
+      <div className="modal-body">
+        <div className="filter-pills" style={{ marginBottom: 12 }}>
+          <button className={`pill ${tab === 'pre' ? 'active' : ''}`} onClick={() => { setTab('pre'); setMsg(null) }}>Pre-match plan{meta.pre_at ? ' ✓' : ''}</button>
+          <button className={`pill ${tab === 'post' ? 'active' : ''}`} onClick={() => { setTab('post'); setMsg(null) }}>Post-match review{meta.post_at ? ' ✓' : ''}</button>
+        </div>
+        {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+        {loading ? <Spinner /> : tab === 'pre' ? (
+          <div>
+            <Note kind="info" style={{ marginBottom: 12 }}>Think before kick-off: what do we expect, what is our plan, and what will we do if it does not work? Only coaches and managers can see this.</Note>
+            {ta(pre, setPre, 'expectation', 'How do we expect the match to go?', 3, 'Their style, strengths and weaknesses, the pitch, our form, what kind of game this will be')}
+            {ta(pre, setPre, 'headline', 'Our game plan in one sentence', 2, 'e.g. Be brave on the ball, play through the middle and press as soon as we lose it')}
+            {PRE_PHASES.map(p => (
+              <div key={p.key} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 8px' }}>{p.hint}</div>
+                <ChipPick options={p.chips} value={pre.phases[p.key]?.chips || []} onChange={v => setPh(setPre, p.key, { chips: v })} />
+                <input style={{ marginTop: 8 }} maxLength={400} placeholder="Add detail in your own words (optional)" value={pre.phases[p.key]?.note || ''} onChange={e => setPh(setPre, p.key, { note: e.target.value })} />
+              </div>
+            ))}
+            {ta(pre, setPre, 'threats', 'Their danger players / threats and how we handle them', 2)}
+            {ta(pre, setPre, 'tasks', 'Individual tasks and key players', 3, 'Who has a special job today? e.g. #6 screens the back four, #9 presses their keeper')}
+            {ta(pre, setPre, 'plan_b', 'Plan B: what we change if it is not working', 2, 'e.g. Switch to a back 3, move the winger inside, drop into a mid block')}
+            {ta(pre, setPre, 'messages', 'Three messages for the team talk', 3, '1. ...\n2. ...\n3. ...')}
+          </div>
+        ) : (
+          <div>
+            <Note kind="info" style={{ marginBottom: 12 }}>Look back honestly: how did the game go against the plan, what did we change, and what do we work on next? Only coaches and managers can see this.</Note>
+            <FormField label="How well did we stick to and carry out the plan?">
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{[1, 2, 3, 4, 5].map(n => <button key={n} type="button" onClick={() => setPost(x => ({ ...x, rating: x.rating === n ? null : n }))} className="btn btn-sm" style={{ minWidth: 44, background: post.rating === n ? 'var(--btb-gold, #e0b43c)' : 'transparent', color: post.rating === n ? '#000' : 'var(--text-muted)', border: `1px solid ${post.rating === n ? 'var(--btb-gold, #e0b43c)' : 'var(--border)'}` }}>{n}</button>)}<span style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'center' }}>1 = not at all, 5 = fully</span></div>
+            </FormField>
+            {ta(post, setPost, 'summary', 'How did the match go?', 4, 'The story of the game: the start, the key moments, the result against what we deserved')}
+            <div style={{ fontWeight: 700, fontSize: 14, margin: '6px 0' }}>Plan versus reality</div>
+            {PRE_PHASES.map(p => {
+              const planned = pre.phases[p.key]
+              const v = post.phases[p.key] || {}
+              return (
+                <div key={p.key} style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginBottom: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{p.title}</div>
+                  {planned && ((planned.chips || []).length > 0 || planned.note) && <div style={{ fontSize: 12, color: 'var(--text-muted)', margin: '2px 0 6px' }}>Plan: {[...(planned.chips || []), planned.note].filter(Boolean).join(' · ')}</div>}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {VERDICTS.map(([k, l, c]) => <button key={k} type="button" onClick={() => setPh(setPost, p.key, { verdict: v.verdict === k ? null : k })} className="btn btn-sm" style={{ background: v.verdict === k ? c : 'transparent', color: v.verdict === k ? '#000' : 'var(--text-muted)', border: `1px solid ${v.verdict === k ? c : 'var(--border)'}` }}>{l}</button>)}
+                  </div>
+                  <input style={{ marginTop: 8 }} maxLength={400} placeholder="What happened? (optional)" value={v.note || ''} onChange={e => setPh(setPost, p.key, { note: e.target.value })} />
+                </div>
+              )
+            })}
+            <div style={{ fontWeight: 700, fontSize: 14, margin: '10px 0 6px' }}>In-game adjustments</div>
+            {post.adjustments.map((a, i) => (
+              <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                <input type="number" min="0" max="130" placeholder="Min" value={a.minute || ''} onChange={e => setPost(x => ({ ...x, adjustments: x.adjustments.map((y, j) => j === i ? { ...y, minute: e.target.value } : y) }))} style={{ width: 70 }} />
+                <input placeholder="What did we change?" maxLength={300} value={a.change || ''} onChange={e => setPost(x => ({ ...x, adjustments: x.adjustments.map((y, j) => j === i ? { ...y, change: e.target.value } : y) }))} style={{ flex: '2 1 200px' }} />
+                <input placeholder="What effect did it have?" maxLength={300} value={a.effect || ''} onChange={e => setPost(x => ({ ...x, adjustments: x.adjustments.map((y, j) => j === i ? { ...y, effect: e.target.value } : y) }))} style={{ flex: '2 1 200px' }} />
+                <button className="btn btn-ghost btn-sm" onClick={() => setPost(x => ({ ...x, adjustments: x.adjustments.filter((_, j) => j !== i) }))}>✕</button>
+              </div>
+            ))}
+            <button className="btn btn-ghost btn-sm" style={{ marginBottom: 14 }} onClick={() => setPost(x => ({ ...x, adjustments: [...x.adjustments, { minute: '', change: '', effect: '' }] }))}>+ Add adjustment</button>
+            {ta(post, setPost, 'improvements', 'Areas to improve', 3, 'What must get better as a team?')}
+            {ta(post, setPost, 'training_focus', 'What we work on in training this week', 3, 'Link it to the areas above: drills, themes, small-sided games')}
+            {ta(post, setPost, 'player_notes', 'Player notes (who stood out, who needs support)', 3)}
+          </div>
+        )}
+      </div>
+      <div className="modal-footer">
+        {tab === 'pre' && <a className="btn btn-ghost" href={waShare(preShare())} target="_blank" rel="noreferrer">Share plan on WhatsApp</a>}
+        <button className="btn btn-ghost" onClick={onClose}>Close</button>
+        <button className="btn btn-primary" onClick={save} disabled={saving || loading}>{saving ? 'Saving...' : tab === 'pre' ? 'Save pre-match plan' : 'Save post-match review'}</button>
+      </div>
+    </Modal>
+  )
+}
+
+function MatchAwardsEditor({ club, fixture, profile, saveRef }) {
+  const [loading, setLoading] = useState(true)
+  const [squad, setSquad] = useState([])
+  const [others, setOthers] = useState([])
+  const [sel, setSel] = useState({})
+  const [msg, setMsg] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from('players').select('id,full_name,date_of_birth,age_group_override').eq('club_id', club.id).eq('is_active', true).in('status', ['active', 'injured']).order('full_name'),
+      supabase.from('match_squad').select('player_id,guest_name,role,player:players(full_name)').eq('fixture_id', fixture.id),
+      supabase.from('match_awards').select('*').eq('fixture_id', fixture.id),
+    ]).then(([{ data: pl }, { data: sq }, { data: aw }]) => {
+      const inSquad = (sq || []).filter(r => r.role !== 'unavailable').map(r => r.player_id ? { val: 'p:' + r.player_id, label: r.player?.full_name } : { val: 'g:' + r.guest_name, label: r.guest_name + ' (not registered)' }).filter(x => x.label)
+      const ids = new Set(inSquad.map(x => x.val))
+      const rest = (pl || []).filter(p => !ids.has('p:' + p.id) && (!fixture.age_group || ageGroupOf(p) === fixture.age_group)).map(p => ({ val: 'p:' + p.id, label: p.full_name }))
+      const known = new Set([...inSquad, ...rest].map(x => x.val))
+      const init = {}
+      ;(aw || []).forEach(a => {
+        let val = a.player_id ? 'p:' + a.player_id : 'g:' + a.guest_name
+        if (!known.has(val)) { if (a.player_id) { const p = (pl || []).find(x => x.id === a.player_id); rest.push({ val, label: p?.full_name || 'Player' }) } else val = 'other' }
+        init[a.award] = { val, other: a.player_id ? '' : a.guest_name, reason: a.reason || '' }
+      })
+      setSquad(inSquad); setOthers(rest); setSel(init); setLoading(false)
+    })
+  }, [club.id, fixture.id])
+
+  const setA = (k, patch) => setSel(s => ({ ...s, [k]: { val: '', other: '', reason: '', ...(s[k] || {}), ...patch } }))
+
+  const doSave = async () => {
+    const rows = []
+    const seen = new Set()
+    for (const [k, label] of AWARDS) {
+      const s = sel[k]
+      if (!s || !s.val) continue
+      let player_id = null, guest_name = null
+      if (s.val.startsWith('p:')) player_id = s.val.slice(2)
+      else if (s.val.startsWith('g:')) guest_name = s.val.slice(2)
+      else guest_name = (s.other || '').trim().replace(/\s+/g, ' ')
+      if (!player_id && (!guest_name || guest_name.length < 2)) return `Type the name for ${label}`
+      const id = player_id || guest_name.toLowerCase()
+      if (seen.has(id)) return 'The same player cannot win two awards in one match'
+      seen.add(id)
+      rows.push({ club_id: club.id, fixture_id: fixture.id, award: k, player_id, guest_name, reason: (s.reason || '').trim().slice(0, 300) || null, created_by: profile.id })
+    }
+    let { error } = await supabase.from('match_awards').delete().eq('fixture_id', fixture.id)
+    if (!error && rows.length) ({ error } = await supabase.from('match_awards').insert(rows))
+    return error ? friendly(error.message) : null
+  }
+  useEffect(() => { if (saveRef) saveRef.current = doSave })
+
+  const save = async () => { setBusy(true); setMsg(null); const e = await doSave(); setBusy(false); setMsg(e ? { kind: 'error', text: e } : { kind: 'ok', text: 'Awards saved' }) }
+
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 12, padding: 12, marginTop: 14 }}>
+      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>Awards <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>parents and players can see these</span></div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 8 }}>{msg.text}</Note>}
+      {loading ? <Spinner /> : AWARDS.map(([k, label, ico]) => {
+        const s = sel[k] || { val: '', other: '', reason: '' }
+        return (
+          <div key={k} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+            <div style={{ width: 150, fontSize: 13, fontWeight: 600 }}>{ico} {label}</div>
+            <select value={s.val} onChange={e => setA(k, { val: e.target.value })} style={{ flex: '1 1 180px' }}>
+              <option value="">Not given</option>
+              {squad.length > 0 && <optgroup label="In the squad">{squad.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}</optgroup>}
+              <optgroup label={squad.length ? 'Other players' : 'Players'}>{others.map(o => <option key={o.val} value={o.val}>{o.label}</option>)}</optgroup>
+              <option value="other">Someone else (type name)…</option>
+            </select>
+            {s.val === 'other' && <input placeholder="Full name" maxLength={80} value={s.other} onChange={e => setA(k, { other: e.target.value })} style={{ flex: '1 1 140px' }} />}
+            {s.val && <input placeholder="Why? (optional)" maxLength={300} value={s.reason} onChange={e => setA(k, { reason: e.target.value })} style={{ flex: '2 1 200px' }} />}
+          </div>
+        )
+      })}
+      {!loading && <button className="btn btn-ghost btn-sm" onClick={save} disabled={busy}>{busy ? 'Saving...' : 'Save awards'}</button>}
     </div>
   )
 }
@@ -960,7 +1183,8 @@ function EditFixtureModal({ fixture, onClose, onSaved }) {
   )
 }
 
-function MatchResultModal({ club, fixture, onClose, onSaved }) {
+function MatchResultModal({ club, fixture, profile, onClose, onSaved }) {
+  const awardsRef = useRef(null)
   const [players, setPlayers] = useState([])
   const [loading, setLoading] = useState(true)
   const [blocked, setBlocked] = useState(false)
@@ -1004,6 +1228,7 @@ function MatchResultModal({ club, fixture, onClose, onSaved }) {
     setSaving(true)
     const events = status === 'completed' ? [...scorers.map(s => ({ type: s.type, player_id: s.player_id, assist_player_id: s.assist_player_id || null, minute: parseInt(s.minute) || 0 })), ...cards.map(c => ({ type: c.type, player_id: c.player_id, minute: parseInt(c.minute) || 0 }))] : []
     const { error: err } = await supabase.rpc('save_match_result', { p_fixture: fixture.id, p_status: status, p_unknown_goals: status === 'completed' ? ours - scorers.length : 0, p_opp_goals: status === 'completed' ? theirs : 0, p_events: events, p_report: report })
+    if (!err && status === 'completed' && awardsRef.current) { const ae = await awardsRef.current(); if (ae) { setSaving(false); setError('Match saved, but the awards were not: ' + ae); return } }
     setSaving(false)
     if (err) setError(friendly(err.message)); else onSaved()
   }
@@ -1054,6 +1279,7 @@ function MatchResultModal({ club, fixture, onClose, onSaved }) {
             <FormField label="Match report (optional, parents can read it)"><textarea rows={3} maxLength={2000} value={report} onChange={e => setReport(e.target.value)} placeholder="How did the game go?" /></FormField>
           </>
         )}
+        {!loading && status === 'completed' && <MatchAwardsEditor club={club} fixture={fixture} profile={profile} saveRef={awardsRef} />}
       </div>
       <div className="modal-footer">
         <button className="btn btn-ghost" onClick={onClose}>Close</button>
@@ -1122,7 +1348,8 @@ const MATCH_ACTIONS = [
 ]
 const EVENT_ICON = Object.fromEntries(MATCH_ACTIONS.map(a => [a.type, a.icon]))
 
-function MatchCentrePage({ club, userRole }) {
+function MatchCentrePage({ club, userRole, profile }) {
+  const [reportFx, setReportFx] = useState(null)
   const [fixtures, setFixtures] = useState([])
   const [selected, setSelected] = useState(null)
   const [events, setEvents] = useState([])
@@ -1295,6 +1522,7 @@ function MatchCentrePage({ club, userRole }) {
         )}
       </div>
       {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+      {reportFx && <MatchReportsModal club={club} fixture={reportFx.f} profile={profile} initialTab={reportFx.tab} onClose={() => setReportFx(null)} />}
       {fixtures.length > 0 && (
         <div className="filter-pills" style={{ marginBottom: 20, overflowX: 'auto' }}>
           {fixtures.map(f => (
@@ -1320,6 +1548,19 @@ function MatchCentrePage({ club, userRole }) {
                   <div className="match-hero-team"><div className="match-hero-team-name">{selected.opponent}</div><div className="match-hero-team-sub">{selected.is_home ? 'Away' : 'Home'}</div></div>
                 </div>
               </div>
+
+              {canLog && (
+                <div className="card" style={{ marginBottom: 16 }}>
+                  <div className="card-hdr"><div className="card-title">Coaching</div></div>
+                  <div className="card-body">
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button className={st === 'upcoming' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setReportFx({ f: selected, tab: 'pre' })}>Pre-match plan</button>
+                      {(st === 'live' || st === 'completed') && <button className={st === 'completed' ? 'btn btn-primary' : 'btn btn-ghost'} onClick={() => setReportFx({ f: selected, tab: 'post' })}>Post-match review</button>}
+                    </div>
+                    {(st === 'live' || st === 'completed') && <MatchAwardsEditor key={selected.id} club={club} fixture={selected} profile={profile} />}
+                  </div>
+                </div>
+              )}
 
               {canLog && st === 'upcoming' && (
                 <div className="card" style={{ marginBottom: 16 }}>
@@ -3702,7 +3943,7 @@ function App() {
       case 'approvals': return profile.role !== 'manager' ? null : <ApprovalsPage profile={profile} club={club} />
       case 'squad': return <SquadPage userRole={profile.role} club={club} />
       case 'fixtures': return <FixturesPage userRole={profile.role} club={club} profile={profile} />
-      case 'match-centre': return <MatchCentrePage club={club} userRole={profile.role} />
+      case 'match-centre': return <MatchCentrePage club={club} userRole={profile.role} profile={profile} />
       case 'training': return <TrainingPage userRole={profile.role} club={club} profile={profile} />
       case 'absences': return profile.role === 'parent' ? null : <AbsencesPage club={club} profile={profile} />
       case 'fees': return profile.role === 'manager' ? <FeesPage club={club} /> : null
