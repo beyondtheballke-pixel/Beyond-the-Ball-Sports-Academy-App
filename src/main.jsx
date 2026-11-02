@@ -2445,6 +2445,7 @@ const ICON_PATHS = {
   ball: <><circle cx="12" cy="12" r="9" /><path d="M12 8l3.5 2.5-1.3 4h-4.4l-1.3-4z" /><path d="M12 3v5M20.5 9.5l-5-1M3.5 9.5l5-1M17.5 19l-3.3-4.5M6.5 19l3.3-4.5" /></>,
   pulse: <path d="M3 12h4l2.5-6 4 12 2.5-6H21" />,
   userx: <><circle cx="10" cy="8" r="3.5" /><path d="M3 20c0-3.5 3-6 7-6" /><path d="M15 15l5 5M20 15l-5 5" /></>,
+  coins: <><circle cx="9" cy="9" r="6" /><path d="M15.5 7.5a6 6 0 1 1-6 8.5" /><path d="M9 6.5v5M7.5 8h3" /></>,
   wallet: <><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18" /><circle cx="16.5" cy="14.5" r="1" /></>,
   message: <path d="M4 5h16v11H9l-5 4z" />,
   chart: <path d="M4 20V11M10 20V4M16 20v-6M22 20H2" />,
@@ -2623,6 +2624,174 @@ function AddTrainingModal({ club, onClose, onSaved }) {
 }
 
 const FEE_TYPES = [{ key: 'transport', label: 'Transport' }, { key: 'kit', label: 'Kit' }, { key: 'monthly', label: 'Monthly training' }, { key: 'registration', label: 'Registration' }, { key: 'other', label: 'Other' }]
+
+// ---------- Collections & payments ledger (manager only, keyed in by hand)
+const LEDGER_CATS = {
+  transport: 'Transport', tournament_fee: 'Tournament / entry fee', kit: 'Kits', equipment: 'Equipment', pitch: 'Pitch hire', referee: 'Referee', refreshments: 'Refreshments',
+  medical: 'Medical / first aid', stipend: 'Coach stipend', sponsorship: 'Sponsorship', donation: 'Donation', fundraising: 'Fundraising', other: 'Other',
+}
+const CATS_IN = ['transport', 'tournament_fee', 'kit', 'sponsorship', 'donation', 'fundraising', 'other']
+const CATS_OUT = ['transport', 'tournament_fee', 'kit', 'equipment', 'pitch', 'referee', 'refreshments', 'medical', 'stipend', 'other']
+const METHODS = [['cash', 'Cash'], ['mpesa', 'M-Pesa'], ['bank', 'Bank'], ['other', 'Other']]
+
+function LedgerModal({ club, profile, entry, startDir, onClose, onSaved }) {
+  const editing = !!entry
+  const [f, setF] = useState({
+    direction: entry?.direction || startDir || 'in', category: entry?.category || 'transport', amount: entry?.amount ?? '', entry_date: entry?.entry_date || todayNairobi(),
+    counterparty: entry?.counterparty || '', method: entry?.method || 'cash', reference: entry?.reference || '', notes: entry?.notes || '', player_id: entry?.player_id || '', fixture_id: entry?.fixture_id || '',
+  })
+  const [players, setPlayers] = useState([]); const [fixtures, setFixtures] = useState([])
+  const [saving, setSaving] = useState(false); const [error, setError] = useState('')
+  const set = (k, v) => setF(x => ({ ...x, [k]: v }))
+  useEffect(() => {
+    supabase.from('players').select('id,full_name').eq('club_id', club.id).eq('is_active', true).order('full_name').then(({ data }) => setPlayers(data || []))
+    supabase.from('fixtures').select('id,opponent,match_date,age_group').eq('club_id', club.id).order('match_date', { ascending: false }).limit(60).then(({ data }) => setFixtures(data || []))
+  }, [club.id])
+  const cats = f.direction === 'in' ? CATS_IN : CATS_OUT
+  const changeDir = (d) => setF(x => ({ ...x, direction: d, category: (d === 'in' ? CATS_IN : CATS_OUT).includes(x.category) ? x.category : 'other', player_id: d === 'out' ? '' : x.player_id }))
+  const save = async () => {
+    const amt = parseInt(f.amount)
+    if (!amt || amt < 1) { setError('Enter the amount'); return }
+    if (amt > 10000000) { setError('That amount looks too large. Check it.'); return }
+    if (!f.entry_date) { setError('Choose the date'); return }
+    setSaving(true); setError('')
+    const row = { direction: f.direction, category: f.category, amount: amt, entry_date: f.entry_date, counterparty: f.counterparty.trim() || null, method: f.method || null, reference: f.reference.trim() || null, notes: f.notes.trim() || null, player_id: f.direction === 'in' && f.player_id ? f.player_id : null, fixture_id: f.fixture_id || null }
+    const { error: err } = editing
+      ? await supabase.from('ledger_entries').update(row).eq('id', entry.id)
+      : await supabase.from('ledger_entries').insert({ ...row, club_id: club.id, created_by: profile.id })
+    setSaving(false)
+    if (err) setError(friendly(err.message)); else onSaved()
+  }
+  return (
+    <Modal title={editing ? 'Edit entry' : f.direction === 'in' ? 'Record a collection' : 'Record a payment'} onClose={onClose}>
+      <div className="modal-body">
+        {error && <Note kind="error" style={{ marginBottom: 12 }}>{error}</Note>}
+        <div className="filter-pills" style={{ marginBottom: 12 }}>
+          <button className={`pill ${f.direction === 'in' ? 'active' : ''}`} onClick={() => changeDir('in')}>Money collected</button>
+          <button className={`pill ${f.direction === 'out' ? 'active' : ''}`} onClick={() => changeDir('out')}>Money paid out</button>
+        </div>
+        <div className="form-grid">
+          <FormField label="What is it for? *"><select value={f.category} onChange={e => set('category', e.target.value)}>{cats.map(c => <option key={c} value={c}>{LEDGER_CATS[c]}</option>)}</select></FormField>
+          <FormField label="Amount (KES) *"><input type="number" inputMode="numeric" min="1" value={f.amount} onChange={e => set('amount', e.target.value)} /></FormField>
+          <FormField label="Date *"><input type="date" max={todayNairobi()} value={f.entry_date} onChange={e => set('entry_date', e.target.value)} /></FormField>
+          <FormField label="Method"><select value={f.method} onChange={e => set('method', e.target.value)}>{METHODS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></FormField>
+          <FormField label={f.direction === 'in' ? 'Received from' : 'Paid to'} full><input maxLength={120} value={f.counterparty} onChange={e => set('counterparty', e.target.value)} placeholder={f.direction === 'in' ? 'e.g. Parents of the U11 team' : 'e.g. Nyeri Shuttle Services'} /></FormField>
+          <FormField label="M-Pesa code / reference"><input maxLength={60} value={f.reference} onChange={e => set('reference', e.target.value)} /></FormField>
+          <FormField label="Linked match (optional)"><select value={f.fixture_id} onChange={e => set('fixture_id', e.target.value)}><option value="">None</option>{fixtures.map(x => <option key={x.id} value={x.id}>{x.opponent}{x.age_group ? ' ' + x.age_group : ''} · {fmtDate(x.match_date)}</option>)}</select></FormField>
+          {f.direction === 'in' && <FormField label="Linked player (optional)" full><select value={f.player_id} onChange={e => set('player_id', e.target.value)}><option value="">None</option>{players.map(p => <option key={p.id} value={p.id}>{p.full_name}</option>)}</select></FormField>}
+          <FormField label="Notes" full><textarea rows={2} maxLength={500} value={f.notes} onChange={e => set('notes', e.target.value)} placeholder="e.g. 18 children x KES 300, bus to Karatina" /></FormField>
+        </div>
+        {f.direction === 'in' && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>For a charge you want to bill one child (and track who has paid), add it as a fee on the Fees page instead.</div>}
+      </div>
+      <div className="modal-footer"><button className="btn btn-ghost" onClick={onClose}>Cancel</button><button className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button></div>
+    </Modal>
+  )
+}
+
+function LedgerPage({ club, profile }) {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [modal, setModal] = useState(null)         // {entry?, dir?}
+  const [dirF, setDirF] = useState('all')
+  const [catF, setCatF] = useState('all')
+  const [month, setMonth] = useState(todayNairobi().slice(0, 7))   // '' = all time
+  const [q, setQ] = useState('')
+  const [showVoid, setShowVoid] = useState(false)
+  const [msg, setMsg] = useState(null)
+  const [limit, setLimit] = useState(60)
+
+  const load = useCallback(async () => {
+    const { data, error } = await supabase.from('ledger_entries').select('*, player:players(full_name), fixture:fixtures(opponent,age_group,match_date)').eq('club_id', club.id).order('entry_date', { ascending: false }).order('created_at', { ascending: false }).limit(2000)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) })
+    setRows(data || []); setLoading(false)
+  }, [club.id])
+  useEffect(() => { load() }, [load])
+
+  const inPeriod = rows.filter(r => !month || r.entry_date.startsWith(month))
+  const live = inPeriod.filter(r => !r.voided)
+  const sum = (arr, d) => arr.filter(r => r.direction === d).reduce((a, r) => a + r.amount, 0)
+  const collected = sum(live, 'in'), paid = sum(live, 'out')
+  const byCat = Object.entries(LEDGER_CATS).map(([k, l]) => ({ k, l, i: sum(live.filter(r => r.category === k), 'in'), o: sum(live.filter(r => r.category === k), 'out') })).filter(c => c.i || c.o)
+  const shown = inPeriod.filter(r => (showVoid || !r.voided) && (dirF === 'all' || r.direction === dirF) && (catF === 'all' || r.category === catF)
+    && (!q.trim() || [r.counterparty, r.reference, r.notes, r.player?.full_name, r.fixture?.opponent, LEDGER_CATS[r.category]].some(x => (x || '').toLowerCase().includes(q.trim().toLowerCase()))))
+  const monthLabel = month ? new Date(month + '-01T12:00:00+03:00').toLocaleDateString('en-KE', { month: 'long', year: 'numeric', timeZone: 'Africa/Nairobi' }) : 'All time'
+
+  const voidEntry = async (r) => {
+    const reason = prompt(`Void this ${r.direction === 'in' ? 'collection' : 'payment'} of ${fmtKES(r.amount)}? It will stop counting in the totals. Why? (e.g. entered twice)`)
+    if (reason === null) return
+    const { error } = await supabase.from('ledger_entries').update({ voided: true, void_reason: reason.trim().slice(0, 300) || 'Voided' }).eq('id', r.id)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else { setMsg({ kind: 'ok', text: 'Entry voided' }); load() }
+  }
+  const unvoid = async (r) => {
+    const { error } = await supabase.from('ledger_entries').update({ voided: false, void_reason: null }).eq('id', r.id)
+    if (error) setMsg({ kind: 'error', text: friendly(error.message) }); else load()
+  }
+  const exportCsv = () => downloadCsv(`collections-payments-${month || 'all'}.csv`, [['Date', 'Type', 'Category', 'Amount', 'Person / business', 'Method', 'Reference', 'Match', 'Player', 'Notes', 'Voided'], ...inPeriod.slice().reverse().map(r => [r.entry_date, r.direction === 'in' ? 'Collected' : 'Paid out', LEDGER_CATS[r.category], r.amount, r.counterparty, r.method, r.reference, r.fixture ? `${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}` : '', r.player?.full_name, r.notes, r.voided ? 'Yes' : ''])])
+
+  if (loading) return <PageSkeleton />
+  return (
+    <div className="page">
+      <div className="page-hdr">
+        <div><div className="page-title">Collections & payments</div><div className="page-sub">Money in and out that is keyed in by hand: transport, tournaments, kits and more</div></div>
+        <div className="page-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" onClick={() => setModal({ dir: 'in' })}>+ Collection</button>
+          <button className="btn btn-ghost" onClick={() => setModal({ dir: 'out' })}>+ Payment</button>
+          <button className="btn btn-ghost" onClick={exportCsv}>Export CSV</button>
+        </div>
+      </div>
+      {msg && <Note kind={msg.kind} style={{ marginBottom: 12 }}>{msg.text}</Note>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+        <input type="month" value={month} onChange={e => { setMonth(e.target.value); setLimit(60) }} style={{ width: 'auto' }} />
+        {month && <button className="btn btn-ghost btn-sm" onClick={() => setMonth('')}>All time</button>}
+        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{monthLabel}</span>
+      </div>
+      <div className="tiles">
+        <div className="tile"><div className="tile-lbl">Collected</div><div className="tile-val" style={{ color: '#22c55e' }}>{fmtKES(collected)}</div></div>
+        <div className="tile"><div className="tile-lbl">Paid out</div><div className="tile-val" style={{ color: '#ef4444' }}>{fmtKES(paid)}</div></div>
+        <div className="tile"><div className="tile-lbl">Balance for the period</div><div className="tile-val">{collected - paid < 0 ? '−' : ''}{fmtKES(Math.abs(collected - paid))}</div></div>
+      </div>
+      {byCat.length > 0 && (
+        <div className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hdr"><div className="card-title">By category</div></div>
+          <div className="card-body">
+            {byCat.map(c => (
+              <div key={c.k} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '6px 0', borderBottom: '0.5px solid var(--border)', fontSize: 13, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600 }}>{c.l}</span>
+                <span><span style={{ color: '#22c55e' }}>+{fmtKES(c.i)}</span> &nbsp; <span style={{ color: '#ef4444' }}>−{fmtKES(c.o)}</span> &nbsp; <span style={{ color: 'var(--text-muted)' }}>net {c.i - c.o < 0 ? '−' : ''}{fmtKES(Math.abs(c.i - c.o))}</span></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+        <div className="filter-pills" style={{ margin: 0 }}>{[['all', 'All'], ['in', 'Collected'], ['out', 'Paid out']].map(([k, l]) => <button key={k} className={`pill ${dirF === k ? 'active' : ''}`} onClick={() => setDirF(k)}>{l}</button>)}</div>
+        <select value={catF} onChange={e => setCatF(e.target.value)} style={{ width: 'auto' }}><option value="all">All categories</option>{Object.entries(LEDGER_CATS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+        <input placeholder="Search" value={q} onChange={e => setQ(e.target.value)} style={{ flex: '1 1 160px', maxWidth: 260 }} />
+        <label style={{ fontSize: 12, display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" style={{ width: 'auto' }} checked={showVoid} onChange={e => setShowVoid(e.target.checked)} /> Show voided</label>
+      </div>
+      {shown.length === 0
+        ? <EmptyState icon="wallet" title="Nothing recorded" sub={rows.length ? 'No entries match these filters.' : 'Record your first collection or payment, for example the transport money for an away match.'} />
+        : <div className="rc-list">
+          {shown.slice(0, limit).map(r => (
+            <div key={r.id} className="rc" style={r.voided ? { opacity: 0.55 } : undefined}>
+              <div className="rc-time"><b>{fmtDate(r.entry_date + 'T12:00:00+03:00')}</b><span>{r.direction === 'in' ? 'collected' : 'paid out'}</span></div>
+              <div className="rc-main">
+                <div className="rc-title">{LEDGER_CATS[r.category]}{r.counterparty ? ` · ${r.counterparty}` : ''} {r.voided && <span className="badge badge-red">voided</span>}</div>
+                <div className="rc-sub">{[METHODS.find(m => m[0] === r.method)?.[1], r.reference, r.fixture && `${r.fixture.opponent}${r.fixture.age_group ? ' ' + r.fixture.age_group : ''}`, r.player?.full_name, r.notes].filter(Boolean).join(' · ')}{r.voided && r.void_reason ? ` · Void reason: ${r.void_reason}` : ''}</div>
+              </div>
+              <div className="rc-side"><div style={{ fontWeight: 700, fontSize: 16, color: r.direction === 'in' ? '#22c55e' : '#ef4444' }}>{r.direction === 'in' ? '+' : '−'}{fmtKES(r.amount)}</div></div>
+              <div className="rc-actions">
+                {!r.voided && <button className="btn btn-ghost btn-sm" onClick={() => setModal({ entry: r })}>Edit</button>}
+                {r.voided ? <button className="btn btn-ghost btn-sm" onClick={() => unvoid(r)}>Restore</button> : <button className="btn btn-ghost btn-sm" onClick={() => voidEntry(r)}>Void</button>}
+              </div>
+            </div>
+          ))}
+          {shown.length > limit && <button className="btn btn-ghost" style={{ gridColumn: '1 / -1' }} onClick={() => setLimit(l => l + 60)}>Show more ({shown.length - limit} left)</button>}
+        </div>}
+      {modal && <LedgerModal club={club} profile={profile} entry={modal.entry} startDir={modal.dir} onClose={() => setModal(null)} onSaved={() => { setModal(null); setMsg({ kind: 'ok', text: 'Saved' }); load() }} />}
+    </div>
+  )
+}
 
 function FeesPage({ club }) {
   const [fees, setFees] = useState([])
@@ -3905,6 +4074,7 @@ function App() {
       { id: 'training', label: 'Training', icon: <Icon name="pulse" /> },
       { id: 'absences', label: 'Absences', icon: <Icon name="userx" /> },
       { id: 'fees', label: 'Fees', icon: <Icon name="wallet" /> },
+      { id: 'ledger', label: 'Collections', icon: <Icon name="coins" /> },
       { id: 'messages', label: 'Messages', icon: <Icon name="message" /> },
       { id: 'analytics', label: 'Analytics', icon: <Icon name="chart" /> },
       { id: 'staff', label: 'Coaches', icon: <Icon name="shield" /> },
@@ -3947,6 +4117,7 @@ function App() {
       case 'training': return <TrainingPage userRole={profile.role} club={club} profile={profile} />
       case 'absences': return profile.role === 'parent' ? null : <AbsencesPage club={club} profile={profile} />
       case 'fees': return profile.role === 'manager' ? <FeesPage club={club} /> : null
+      case 'ledger': return profile.role === 'manager' ? <LedgerPage club={club} profile={profile} /> : null
       case 'messages': return <MessagesPage profile={profile} clubId={club.id} />
       case 'analytics': return <AnalyticsPage clubId={club.id} />
       default: return profile.role === 'parent' ? <ParentDashboard profile={profile} club={club} setPage={setPage} /> : <ManagerDashboard profile={profile} club={club} setPage={setPage} />
